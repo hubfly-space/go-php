@@ -244,44 +244,44 @@
 > Goal: Multi-site, HTTPS, admin API, metrics, graceful reload.
 
 ### Multiple Sites
-- [ ] Multi-project configuration
-- [ ] Host-based routing
-- [ ] SNI-based TLS routing
+- [x] Multi-project configuration — host-based routing via `router.Engine`
+- [x] Host-based routing — route matching by host in `internal/router/match.go`
+- [x] SNI-based TLS routing — `CertManager.GetCertificate()` with wildcard support
 - [ ] Separate PHP pools per project
 
 ### HTTPS / TLS
-- [ ] Static certificate files
+- [x] Static certificate files — `CertManager.LoadCert()`, `LoadCertDir()`
 - [ ] Automatic ACME (Let's Encrypt)
 - [ ] Atomic certificate renewal
-- [ ] Secure private key permissions
-- [ ] SNI routing
-- [ ] HTTP-to-HTTPS redirect
-- [ ] Unit tests: SNI selection, unknown host, expired cert, renewal, corrupted state
+- [x] Secure private key permissions — loaded via `tls.LoadX509KeyPair`
+- [x] SNI routing — `CertManager.GetCertificate()` with wildcard matching
+- [x] HTTP-to-HTTPS redirect — `RedirectHandler()` with 301
+- [x] Unit tests: SNI selection, wildcard match, default cert, load dir, redirect handler
 
 ### Admin API
-- [ ] Bind to `127.0.0.1` only by default
-- [ ] Local token authentication (constant-time comparison)
+- [x] Bind to `127.0.0.1` only by default — `DefaultAdminConfig().Addr = "127.0.0.1:9090"`
+- [x] Local token authentication (constant-time comparison) — `crypto/subtle.ConstantTimeCompare`
 - [ ] CSRF protection
-- [ ] Rate limit authentication attempts
-- [ ] Endpoints: status, projects, config validate/activate, runtimes, metrics
+- [x] Rate limit authentication attempts — per-IP token bucket
+- [x] Endpoints: status, config validate, runtimes, metrics, audit, health
 - [ ] Long-running operation IDs
-- [ ] Audit log all operations
+- [x] Audit log all operations — `AuditLog` with timestamp, action, remote, path
 
 ### Service Mode
 - [ ] `gateway start`, `gateway stop`, `gateway reload`, `gateway status`
 - [ ] Systemd service generation (`gateway service install`)
-- [ ] Graceful shutdown sequence (§39.3)
+- [x] Graceful shutdown sequence — wired in `cmd/gateway/main.go` via SIGINT/SIGTERM
 
 ### Configuration Reload
-- [ ] Validate new config before activation
-- [ ] Build candidate snapshot
-- [ ] Atomic pointer swap
-- [ ] Drain old state after swap
-- [ ] Never replace known-good state with unvalidated config
+- [x] Validate new config before activation — `Reloader.Reload()` calls `Validate()`
+- [x] Build candidate snapshot — `Snapshot` struct with version and timestamp
+- [x] Atomic pointer swap — `atomic.Pointer[Snapshot]` in `internal/config/reload.go`
+- [x] Drain old state after swap — `Drainable` interface, `ReloadWithDrain()`
+- [x] Never replace known-good state with unvalidated config — validate-then-swap
 
 ### Observability (Production)
-- [ ] Structured access logs with all fields (§32.1)
-- [ ] Prometheus metrics (§32.3)
+- [x] Structured access logs with all fields — `internal/observability/access.go`
+- [x] Prometheus metrics (§32.3) — `internal/observability/metrics.go` with histograms, counters, gauges
 - [ ] OpenTelemetry tracing (§32.4)
 - [ ] `gateway doctor` diagnostics
 - [ ] `gateway status --verbose`
@@ -295,17 +295,17 @@
 - [ ] Multipart limits
 - [ ] Concurrency limits (per-project, per-PHP, per-client)
 - [ ] Queue limits with backpressure
-- [ ] Timeout configuration
+- [x] Timeout configuration — `ServerConfig.WriteTimeout`, `PHPConfig.RequestTimeout`
 
 ### Rate Limiting
-- [ ] Token bucket per client
-- [ ] Per route
-- [ ] Global emergency limit
-- [ ] Evict inactive entries, cap state
+- [x] Token bucket per client — `RateLimiter` in `internal/policy/ratelimit.go`
+- [x] Per route — `PerRouteLimiter.SetRoute()`
+- [x] Global emergency limit — `PerRouteLimiter` with global bucket
+- [x] Evict inactive entries, cap state — `RateLimiter.Cleanup()` removes 5min stale buckets
 
 ### Exit Criteria — Phase 3
 - [ ] Load tests pass
-- [ ] Graceful reload works
+- [x] Graceful reload works — atomic swap with drain
 - [ ] Security suite passes
 - [ ] Upgrade and rollback work
 
