@@ -66,31 +66,31 @@ type Rule struct {
 
 // Condition is a single match condition within a rule.
 type Condition struct {
-	Type    ConditionType
-	Values  []string
-	Negate  bool
+	Type   ConditionType
+	Values []string
+	Negate bool
 }
 
 // ConditionType determines what the condition matches.
 type ConditionType string
 
 const (
-	CondMethod    ConditionType = "method"
-	CondPath      ConditionType = "path"
+	CondMethod     ConditionType = "method"
+	CondPath       ConditionType = "path"
 	CondPathPrefix ConditionType = "path_prefix"
-	CondPathRegex ConditionType = "path_regex"
-	CondHost      ConditionType = "host"
-	CondHeader    ConditionType = "header"
+	CondPathRegex  ConditionType = "path_regex"
+	CondHost       ConditionType = "host"
+	CondHeader     ConditionType = "header"
 	CondQueryParam ConditionType = "query_param"
-	CondBodySize  ConditionType = "body_size"
-	CondIP        ConditionType = "ip"
-	CondIPRange   ConditionType = "ip_range"
-	CondScheme    ConditionType = "scheme"
+	CondBodySize   ConditionType = "body_size"
+	CondIP         ConditionType = "ip"
+	CondIPRange    ConditionType = "ip_range"
+	CondScheme     ConditionType = "scheme"
 )
 
 // Exclusion excludes requests from a rule.
 type Exclusion struct {
-	Type  ConditionType
+	Type   ConditionType
 	Values []string
 }
 
@@ -313,14 +313,14 @@ func (e *Engine) Rules() []Rule {
 func (e *Engine) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := &Context{
-			Phase:   PhaseRequest,
-			Method:  r.Method,
-			Path:    r.URL.Path,
-			Host:    r.Host,
-			Headers: r.Header,
-			Query:   r.URL.RawQuery,
+			Phase:    PhaseRequest,
+			Method:   r.Method,
+			Path:     r.URL.Path,
+			Host:     r.Host,
+			Headers:  r.Header,
+			Query:    r.URL.RawQuery,
 			RemoteIP: parseIP(r.RemoteAddr),
-			TLS:     r.TLS != nil,
+			TLS:      r.TLS != nil,
 		}
 
 		decision := e.Evaluate(ctx)

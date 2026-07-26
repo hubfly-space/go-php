@@ -69,12 +69,12 @@ func TestConfigLayeringMerge(t *testing.T) {
 	cl := NewConfigLayering()
 
 	cl.AddLayer("defaults", 100, map[string]string{
-		"memory_limit": "128M",
+		"memory_limit":    "128M",
 		"error_reporting": "E_ALL",
 	})
 
 	cl.AddLayer("project", 200, map[string]string{
-		"memory_limit": "256M",
+		"memory_limit":   "256M",
 		"display_errors": "On",
 	})
 

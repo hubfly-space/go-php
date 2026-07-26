@@ -9,24 +9,24 @@ import (
 
 // PoolConfig defines a PHP-FPM pool.
 type PoolConfig struct {
-	Name            string
-	User            string
-	Group           string
-	SocketPath      string
-	ListenMode      string // e.g. "0660"
-	MaxChildren     int
-	StartServers    int
-	MinSpare        int
-	MaxSpare        int
-	MaxRequests     int
-	RequestTimeout  int // seconds
-	ProcessIdle     int // seconds
-	StatusPath      string
-	ClearEnv        bool
-	SecurityExt     string // e.g. ".php"
-	PhpIniPath      string
-	AccessLog       string
-	ErrorLog        string
+	Name             string
+	User             string
+	Group            string
+	SocketPath       string
+	ListenMode       string // e.g. "0660"
+	MaxChildren      int
+	StartServers     int
+	MinSpare         int
+	MaxSpare         int
+	MaxRequests      int
+	RequestTimeout   int // seconds
+	ProcessIdle      int // seconds
+	StatusPath       string
+	ClearEnv         bool
+	SecurityExt      string // e.g. ".php"
+	PhpIniPath       string
+	AccessLog        string
+	ErrorLog         string
 	CustomDirectives map[string]string
 }
 

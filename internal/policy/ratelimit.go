@@ -16,10 +16,10 @@ type RateLimiter struct {
 
 // Bucket is a single token bucket.
 type Bucket struct {
-	Tokens    float64
-	MaxTokens float64
+	Tokens     float64
+	MaxTokens  float64
 	RefillRate float64 // tokens per second
-	LastCheck time.Time
+	LastCheck  time.Time
 }
 
 // NewRateLimiter creates a rate limiter.
@@ -43,10 +43,10 @@ func (rl *RateLimiter) Allow(key string) bool {
 			maxTokens = float64(rl.rate)
 		}
 		b = &Bucket{
-			Tokens:    maxTokens,
-			MaxTokens: maxTokens,
+			Tokens:     maxTokens,
+			MaxTokens:  maxTokens,
 			RefillRate: float64(rl.rate) / 60.0,
-			LastCheck: time.Now(),
+			LastCheck:  time.Now(),
 		}
 		rl.buckets[key] = b
 	}
