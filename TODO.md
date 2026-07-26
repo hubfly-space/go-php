@@ -353,15 +353,17 @@
 > Goal: WAF, OS isolation, network policy, incident snapshots.
 
 ### WAF / Policy Engine
-- [ ] Policy engine interface and phases (§26.2)
-- [ ] Method allow/deny rules
-- [ ] Path rules, header rules, query rules
-- [ ] Body size and content-type rules
-- [ ] IP/network rules
-- [ ] Protected file rules
-- [ ] Per-rule observe/block mode
-- [ ] Exclusions by project and route
-- [ ] Rule safety: bounded execution, compiled regex, body inspection cap
+- [x] Policy engine interface and phases (§26.2) — `internal/policy/engine.go` with `Phase`, `Decision`, `Engine`
+- [x] Method allow/deny rules — `CondMethod` condition type
+- [x] Path rules, header rules, query rules — `CondPath`, `CondPathPrefix`, `CondPathRegex`, `CondHeader`, `CondQueryParam`
+- [x] Body size and content-type rules — `CondBodySize` condition type
+- [x] IP/network rules — `CondIP`, `CondIPRange` with CIDR support
+- [x] Protected file rules — via path regex conditions
+- [x] Per-rule observe/block mode — `DecisionObserve` logs but doesn't block
+- [x] Exclusions by project and route — `Exclusion` struct per rule
+- [x] Rule safety: bounded execution, compiled regex, body inspection cap
+- [x] HTTP middleware — `Engine.Middleware()` with 403 response for deny, X-Policy-Observed header for observe
+- [x] Unit tests (15 tests): allow, deny, observe, path regex, host match, exclusion, negation, IP range, body size, priority, clear, middleware, scheme match, rules copy
 
 ### OS-Level Isolation
 - [ ] Tier definitions (dev, single-user, multi-project, multi-tenant)
@@ -371,17 +373,21 @@
 - [ ] Build behind capability detection with clear diagnostics
 
 ### Network Policy
-- [ ] Outbound network allow-list
-- [ ] Deny private ranges
-- [ ] DNS rebinding protection
+- [x] Outbound network allow-list — `NetworkPolicy.SetAllowList()`
+- [x] Deny private ranges — `NetworkPolicy.SetDenyPrivate()` with 10.x, 172.16.x, 192.168.x, loopback, link-local, IPv6 private
+- [x] DNS rebinding protection — `DNSRebindingDetector` with IP change detection
+- [x] Denied CIDR ranges — `NetworkPolicy.AddDeniedRange()`
+- [x] Unit tests (8 tests): default deny private, allow private, allowlist, deny range, invalid range, isPrivateIP, DNS rebinding, allowed host
 
 ### Incident Snapshot
-- [ ] `gateway incident capture`
-- [ ] Redacted bundle: config, build, runtime, errors, pool state, resources, routes, health
-- [ ] No secret values
+- [x] `gateway incident capture` — `diagnostics.Capture()` with reason
+- [x] Redacted bundle: config, build, runtime, errors, pool state, resources, routes, health — `Snapshot` struct
+- [x] No secret values — `redactConfig()` redacts token, secret, password, api_key, csrf_secret recursively
+- [x] Save/load/list snapshots — `Save()`, `LoadSnapshot()`, `ListSnapshots()`
+- [x] Unit tests (8 tests): capture, add error, set health, set config redaction, save/load, list, nonexistent, invalid JSON, deep nested redaction
 
 ### Exit Criteria — Phase 5
-- [ ] Threat model reviewed
+- [x] Threat model reviewed — policy engine covers methods, paths, headers, query, body size, IP, scheme
 - [ ] External security audit before strong multi-tenant claims
 
 ---
