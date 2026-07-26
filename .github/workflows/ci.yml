@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+      - name: go vet
+        run: go vet ./...
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.25']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+      - name: Run unit tests
+        run: go test -race -count=1 -timeout=120s ./internal/...
+      - name: Run cmd tests
+        run: go test -race -count=1 ./cmd/...
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: Install PHP-FPM
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y php-fpm
+      - name: Start PHP-FPM
+        run: |
+          sudo mkdir -p /run/php
+          sudo php-fpm8.1 --daemonize --fpm-config /etc/php/8.1/fpm/php-fpm.conf || true
+      - name: Run integration tests
+        run: go test -tags=integration -race -count=1 -timeout=120s ./test/integration/...
+
+  security-tests:
+    name: Security Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: Run security tests
+        run: go test -tags=security -race -count=1 -timeout=120s ./test/security/...
+
+  fuzz-smoke:
+    name: Fuzz Smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: Fuzz path parser
+        run: go test -fuzz=FuzzPathParser -fuzztime=10s ./internal/filesystem/...
+      - name: Fuzz htaccess translator
+        run: go test -fuzz=FuzzHtaccessTranslator -fuzztime=10s ./internal/diagnostics/...
+      - name: Fuzz FastCGI record parser
+        run: go test -fuzz=FuzzFastCGIRecordParser -fuzztime=10s ./internal/php/fastcgi/...
+      - name: Fuzz config decoder
+        run: go test -fuzz=FuzzConfigDecoder -fuzztime=10s ./internal/config/...
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: Generate coverage
+        run: |
+          go test -coverprofile=coverage.out ./internal/...
+          go tool cover -func=coverage.out | tail -1
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
