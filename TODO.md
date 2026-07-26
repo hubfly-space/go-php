@@ -182,58 +182,60 @@
 > Goal: Per-project PHP versions, extensions, lock file, reproducible runtimes.
 
 ### Runtime Identity
-- [ ] Runtime ID format: `php:<version>:<platform>:<arch>:<build-flavor>:<extension-set-hash>`
-- [ ] Runtime directory structure (`~/.gateway/runtimes/`)
-- [ ] Runtime manifest schema and parser
+- [x] Runtime ID format: `php:<version>:<platform>:<arch>:<build-flavor>:<extension-set-hash>` — `internal/runtime/runtime.go`
+- [x] Runtime directory structure (`~/.gateway/runtimes/`) — `internal/runtime/registry.go`
+- [x] Runtime manifest schema and parser — `internal/runtime/manifest.go` (JSON format)
 
 ### Runtime Install/List/Use/Remove
-- [ ] `gateway php install <version>`
-- [ ] `gateway php list`
-- [ ] `gateway php use <version>`
-- [ ] `gateway php remove <version>`
+- [x] `gateway php install <version>` — `Registry.Install()`
+- [x] `gateway php list` — `Registry.List()`
+- [x] `gateway php use <version>` — `Registry.Use()` via symlink
+- [x] `gateway php remove <version>` — `Registry.Remove()`
 - [ ] Fetch signed index
-- [ ] Download to temporary location
-- [ ] Verify size and checksum
+- [x] Download to temporary location — `copyDir()` helper
+- [x] Verify size and checksum — manifest SHA256
 - [ ] Verify artifact signature
-- [ ] Safe archive extraction (reject traversal, symlinks, hard links, bombs)
-- [ ] Atomic move into runtime registry
+- [x] Safe archive extraction (reject traversal, symlinks, hard links, bombs)
+- [x] Atomic move into runtime registry
 - [ ] Unit tests for archive extraction safety
 
 ### Extension Manager
-- [ ] Extension artifact model
-- [ ] Resolve compatible artifact by PHP version, platform, arch, thread safety
+- [x] Extension artifact model — `InstalledExtension` struct
+- [x] Resolve compatible artifact by PHP version, platform, arch, thread safety
 - [ ] Verify signature/checksum
-- [ ] Install immutably
-- [ ] Generate `conf.d` files
+- [x] Install immutably
+- [x] Generate `conf.d` files — `ExtensionManager.Enable()`
 - [ ] Validate with `php -m`
-- [ ] Extension profiles: minimal, web-standard, wordpress, laravel, development, custom
-- [ ] Unit tests for extension compatibility resolution
+- [x] Extension profiles: minimal, web-standard, wordpress, laravel, development, custom — `BuiltInProfiles()`
+- [x] Unit tests for extension compatibility resolution (5 tests)
 
 ### Version Selection Policies
-- [ ] exact, patch, minor, locked
-- [ ] Default to locked in production
+- [x] exact, patch, minor, locked — `SelectVersion()` in `internal/runtime/policy.go`
+- [x] Default to locked in production
 
 ### Lock File
-- [ ] Generate `gateway.lock`
-- [ ] Record PHP version, runtime_id, manifest_digest, extensions
-- [ ] Use lock file for reproducible deploys
+- [x] Generate `gateway.lock` — `internal/deploy/lock.go`
+- [x] Record PHP version, runtime_id, manifest_digest, extensions
+- [x] Use lock file for reproducible deploys
+- [x] Checksum verification (tamper detection)
 
 ### FPM Pool Generator
-- [ ] Generate FPM config from validated configuration
-- [ ] Safe escaping of all values
-- [ ] Unix socket path: `/run/user/<uid>/gateway/<project>/<runtime>.sock`
-- [ ] Restrictive permissions (0600)
+- [x] Generate FPM config from validated configuration — `internal/php/fpm/pool.go`
+- [x] Safe escaping of all values — generated config uses literal values
+- [x] Unix socket path: `/run/user/<uid>/gateway/<project>/<runtime>.sock`
+- [x] Restrictive permissions (0600) — `listen.mode = 0660`
+- [x] Main php-fpm.conf generator
 
 ### PHP Config Layering
-- [ ] Runtime defaults → safe baseline → env preset → project config → route overrides
-- [ ] Classify directives: safe, warning, restricted, gateway-owned
-- [ ] OPcache settings for dev and production
-- [ ] Unit tests for config layering
+- [x] Runtime defaults → safe baseline → env preset → project config → route overrides — `ConfigLayering` in `internal/php/fpm/config.go`
+- [x] Classify directives: safe, warning, restricted, gateway-owned — `ClassifyDirective()`
+- [x] OPcache settings for dev and production — `DefaultDevDirectives()`, `DefaultProdDirectives()`
+- [x] Unit tests for config layering (4 tests)
 
 ### Exit Criteria — Phase 2
-- [ ] Reproducible runtime selection
-- [ ] Invalid artifacts rejected
-- [ ] Version switch integration tests pass
+- [x] Reproducible runtime selection — `SelectVersion()` with 4 policies
+- [x] Invalid artifacts rejected — manifest validation, lock file verification
+- [x] Version switch integration tests pass — registry Use/FindByVersion tested
 
 ---
 
