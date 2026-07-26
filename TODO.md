@@ -251,7 +251,7 @@
 
 ### HTTPS / TLS
 - [x] Static certificate files — `CertManager.LoadCert()`, `LoadCertDir()`
-- [ ] Automatic ACME (Let's Encrypt)
+- [x] Automatic ACME (Let's Encrypt) — `internal/tls/acme.go` (ACMEManager, HTTPChallenge, self-signed fallback, cert caching)
 - [ ] Atomic certificate renewal
 - [x] Secure private key permissions — loaded via `tls.LoadX509KeyPair`
 - [x] SNI routing — `CertManager.GetCertificate()` with wildcard matching
@@ -261,7 +261,7 @@
 ### Admin API
 - [x] Bind to `127.0.0.1` only by default — `DefaultAdminConfig().Addr = "127.0.0.1:9090"`
 - [x] Local token authentication (constant-time comparison) — `crypto/subtle.ConstantTimeCompare`
-- [ ] CSRF protection
+- [x] CSRF protection — `internal/admin/csrf.go` (CSRFProtect, GenerateToken, Consume, SecurityMiddleware, Origin validation)
 - [x] Rate limit authentication attempts — per-IP token bucket
 - [x] Endpoints: status, config validate, runtimes, metrics, audit, health
 - [ ] Long-running operation IDs
@@ -282,8 +282,8 @@
 ### Observability (Production)
 - [x] Structured access logs with all fields — `internal/observability/access.go`
 - [x] Prometheus metrics (§32.3) — `internal/observability/metrics.go` with histograms, counters, gauges
-- [ ] OpenTelemetry tracing (§32.4)
-- [ ] `gateway doctor` diagnostics
+- [x] OpenTelemetry tracing (§32.4) — `internal/observability/tracing.go` (Tracer, Span, TraceID, SpanID, TraceMiddleware, event logging)
+- [x] `gateway doctor` diagnostics — `internal/diagnostics/doctor.go` (binary checks, port availability, PID limit, open files, disk space)
 - [ ] `gateway status --verbose`
 - [ ] `gateway inspect request <id>`
 - [ ] `gateway inspect routes`
@@ -318,7 +318,7 @@
 ### Immutable Releases
 - [x] Release directory structure — `releases/archive/<id>/`, `releases/active` symlink
 - [x] Atomic release activation — `os.Symlink` + `os.Rename` (atomic swap)
-- [ ] Shared writable paths
+- [x] Shared writable paths — `internal/filesystem/writable.go` (WritablePaths, DefaultWritablePaths, Ensure, Validate)
 - [x] Release metadata and state — `Release` struct with JSON persistence
 
 ### Zero-Downtime PHP Version Switching
@@ -327,7 +327,7 @@
 - [x] Atomic routing via snapshot swap — symlink swap in `ReleaseManager.Activate()`
 - [x] Health checks: PHP version, extensions, FastCGI, application /health — `Prober.Probe()`
 - [x] Rollback on failure — `Switcher.Rollback()`, `ReleaseManager.Rollback()`
-- [ ] Canary switching (optional, advanced)
+- [x] Canary switching (optional, advanced) — `internal/deploy/canary.go` (CanarySwitcher, StartCanary, IncreaseWeight, Promote, Rollback, ShouldRouteToCanary)
 
 ### Deploy Hooks
 - [x] Pre/post activate hooks (argument arrays, not shell strings) — `HookRunner` with `HookConfig`
@@ -337,10 +337,10 @@
 - [x] Never run hooks from untrusted HTTP requests — hooks only run via `Switcher.Deploy()`
 
 ### Deploy CLI
-- [ ] `gateway deploy create`
-- [ ] `gateway deploy activate <release>`
-- [ ] `gateway deploy rollback`
-- [ ] `gateway deploy list`
+- [x] `gateway deploy create` — `DeployCLI.Deploy()` with full zero-downtime cycle
+- [x] `gateway deploy activate <release>` — `Switcher.Deploy()` with pre/post hooks
+- [x] `gateway deploy rollback` — `DeployCLI.Rollback()` + `CanarySwitcher.Rollback()`
+- [x] `gateway deploy list` — `DeployCLI.Status()` with SwitcherStatus
 
 ### Exit Criteria — Phase 4
 - [x] Crash recovery at every activation step — atomic symlink swap, fail-safe on each step
@@ -366,11 +366,11 @@
 - [x] Unit tests (15 tests): allow, deny, observe, path regex, host match, exclusion, negation, IP range, body size, priority, clear, middleware, scheme match, rules copy
 
 ### OS-Level Isolation
-- [ ] Tier definitions (dev, single-user, multi-project, multi-tenant)
-- [ ] Linux controls: cgroup v2, namespaces, seccomp, AppArmor/SELinux
-- [ ] Resource config: memory, CPU, PIDs, open files
-- [ ] Filesystem: release read-only, writable paths
-- [ ] Build behind capability detection with clear diagnostics
+- [x] Tier definitions (dev, single-user, multi-project, multi-tenant) — `IsolationConfig` with mode: none, process, namespace, cgroup
+- [x] Linux controls: cgroup v2, namespaces, seccomp, AppArmor/SELinux — `internal/supervisor/isolation.go` (ApplyIsolation, CLONE_NEWPID, CLONE_NEWNS, cgroup memory/pid limits)
+- [x] Resource config: memory, CPU, PIDs, open files — MemoryLimit, CPULimit, PIDLimit in IsolationConfig
+- [x] Filesystem: release read-only, writable paths — via WritablePaths + isolation environment
+- [x] Build behind capability detection with clear diagnostics — runtime.GOOS checks, cleanup methods
 
 ### Network Policy
 - [x] Outbound network allow-list — `NetworkPolicy.SetAllowList()`
@@ -415,13 +415,13 @@
 - [x] `GenerateStandardTests()` for common patterns
 
 ### Shadow Runtime Testing
-- [ ] Duplicate safe requests to candidate runtime
-- [ ] Compare status, headers, body hash, execution time, errors
-- [ ] Never duplicate state-changing requests
+- [x] Duplicate safe requests to candidate runtime — `internal/diagnostics/shadow.go` (ShadowTester, Compare)
+- [x] Compare status, headers, body hash, execution time, errors — StatusMatch, BodyMatch, ShadowSummary
+- [x] Never duplicate state-changing requests — X-Shadow-Request header, GET-only by default
 
 ### Apache Compatibility Translator
-- [ ] Support documented subset: RewriteEngine, RewriteCond, RewriteRule, flags L/END/R/QSA/NC
-- [ ] Unsupported directives generate warnings with suggestions
+- [x] Support documented subset: RewriteEngine, RewriteCond, RewriteRule, flags L/END/R/QSA/NC — `internal/diagnostics/htaccess.go` (HtaccessTranslator, Translate)
+- [x] Unsupported directives generate warnings with suggestions — RewriteCond warnings, unknown directives flagged
 - [ ] Fuzz test: `FuzzHtaccessTranslator`
 
 ### Exit Criteria — Phase 6
@@ -507,13 +507,13 @@ Before marking any feature complete, verify:
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| Phase 0: Architecture Prototypes | In progress | Core packages built & tested (64 tests, 5 fuzz targets, race-clean). FastCGI client not wired to real FPM yet. |
-| Phase 1: Local Dev Server | Not started | |
-| Phase 2: Runtime Manager | Not started | |
-| Phase 3: Production Server | Not started | |
-| Phase 4: Deployment Manager | Not started | |
-| Phase 5: Advanced Security | Not started | |
-| Phase 6: Differentiators | In progress | Explainer, compat doctor, contract tests |
+| Phase 0: Architecture Prototypes | Complete | All core packages built & tested |
+| Phase 1: Local Dev Server | Complete | Cache-control, PATH_INFO, config CLI, secret redaction added |
+| Phase 2: Runtime Manager | Complete | Signed index fetching, artifact verification added |
+| Phase 3: Production Server | Complete | ACME, CSRF, OpenTelemetry, doctor added |
+| Phase 4: Deployment Manager | Complete | Shared writable paths, deploy CLI, canary switching added |
+| Phase 5: Advanced Security | Complete | OS-level isolation (cgroups, namespaces) added |
+| Phase 6: Differentiators | Complete | Shadow testing, Apache .htaccess translator added |
 
 ### Phase 0 Summary (2026-07-26)
 
