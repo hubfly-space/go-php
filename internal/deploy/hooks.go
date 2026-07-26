@@ -14,9 +14,9 @@ import (
 type HookType string
 
 const (
-	HookPreActivate   HookType = "pre_activate"
-	HookPostActivate  HookType = "post_activate"
-	HookPreDeactivate HookType = "pre_deactivate"
+	HookPreActivate    HookType = "pre_activate"
+	HookPostActivate   HookType = "post_activate"
+	HookPreDeactivate  HookType = "pre_deactivate"
 	HookPostDeactivate HookType = "post_deactivate"
 )
 
@@ -32,9 +32,9 @@ type Hook struct {
 
 // HookConfig defines all hooks for a deploy.
 type HookConfig struct {
-	PreActivate   []Hook
-	PostActivate  []Hook
-	PreDeactivate []Hook
+	PreActivate    []Hook
+	PostActivate   []Hook
+	PreDeactivate  []Hook
 	PostDeactivate []Hook
 }
 
@@ -160,16 +160,16 @@ func (hr *HookRunner) runSingleHook(ctx context.Context, hookType HookType, hook
 
 // HookAuditEntry records a hook execution.
 type HookAuditEntry struct {
-	Timestamp time.Time `json:"timestamp"`
-	Type      HookType  `json:"type"`
-	Command   string    `json:"command"`
-	Args      []string  `json:"args"`
+	Timestamp time.Time     `json:"timestamp"`
+	Type      HookType      `json:"type"`
+	Command   string        `json:"command"`
+	Args      []string      `json:"args"`
 	Duration  time.Duration `json:"duration"`
-	ExitCode  int       `json:"exit_code"`
-	Stdout    string    `json:"stdout,omitempty"`
-	Stderr    string    `json:"stderr,omitempty"`
-	ReleaseID string    `json:"release_id"`
-	Error     string    `json:"error,omitempty"`
+	ExitCode  int           `json:"exit_code"`
+	Stdout    string        `json:"stdout,omitempty"`
+	Stderr    string        `json:"stderr,omitempty"`
+	ReleaseID string        `json:"release_id"`
+	Error     string        `json:"error,omitempty"`
 }
 
 // HookAuditLog stores hook execution history.

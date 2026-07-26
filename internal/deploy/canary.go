@@ -19,11 +19,11 @@ type CanarySwitcher struct {
 
 // CanaryState holds the current canary deployment state.
 type CanaryState struct {
-	Active     *Release   `json:"active"`
-	Canary     *Release   `json:"canary"`
-	Weight     int        `json:"weight"` // 0-100, percentage of traffic to canary
-	StartedAt  time.Time  `json:"started_at"`
-	Status     string     `json:"status"` // pending, active, promoted, rolled_back
+	Active    *Release  `json:"active"`
+	Canary    *Release  `json:"canary"`
+	Weight    int       `json:"weight"` // 0-100, percentage of traffic to canary
+	StartedAt time.Time `json:"started_at"`
+	Status    string    `json:"status"` // pending, active, promoted, rolled_back
 }
 
 // NewCanarySwitcher creates a canary deployment manager.
@@ -163,9 +163,9 @@ func randomInt(max int) int {
 
 // DeployCLI holds configuration for the deploy CLI commands.
 type DeployCLI struct {
-	Switcher    *Switcher
-	Canary      *CanarySwitcher
-	Logger      *slog.Logger
+	Switcher *Switcher
+	Canary   *CanarySwitcher
+	Logger   *slog.Logger
 }
 
 // Deploy performs a full deploy with optional canary.

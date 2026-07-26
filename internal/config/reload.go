@@ -8,9 +8,9 @@ import (
 
 // Snapshot is an immutable configuration snapshot.
 type Snapshot struct {
-	Config    *Config
+	Config     *Config
 	CompiledAt time.Time
-	Version   uint64
+	Version    uint64
 }
 
 // Reloader manages configuration reload with atomic swap.

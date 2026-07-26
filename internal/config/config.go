@@ -30,14 +30,14 @@ type ServerConfig struct {
 
 // PHPConfig defines PHP-FPM backend settings.
 type PHPConfig struct {
-	Binary          string        `yaml:"binary"`
-	SocketPath      string        `yaml:"socket_path"`
-	MaxChildren     int           `yaml:"max_children"`
-	StartServers    int           `yaml:"start_servers"`
-	MinSpare        int           `yaml:"min_spare"`
-	MaxSpare        int           `yaml:"max_spare"`
-	MaxRequests     int           `yaml:"max_requests"`
-	RequestTimeout  time.Duration `yaml:"request_timeout"`
+	Binary         string        `yaml:"binary"`
+	SocketPath     string        `yaml:"socket_path"`
+	MaxChildren    int           `yaml:"max_children"`
+	StartServers   int           `yaml:"start_servers"`
+	MinSpare       int           `yaml:"min_spare"`
+	MaxSpare       int           `yaml:"max_spare"`
+	MaxRequests    int           `yaml:"max_requests"`
+	RequestTimeout time.Duration `yaml:"request_timeout"`
 }
 
 // RouteConfig defines a single route.
