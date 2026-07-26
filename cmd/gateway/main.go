@@ -23,6 +23,7 @@ import (
 	"github.com/go-php/gateway/internal/php/fastcgi"
 	"github.com/go-php/gateway/internal/router"
 	"github.com/go-php/gateway/internal/supervisor"
+	"github.com/go-php/gateway/internal/ui"
 )
 
 func main() {
@@ -30,6 +31,7 @@ func main() {
 	phpFPM := serveCmd.String("php-fpm", "", "path to php-fpm binary")
 	addr := serveCmd.String("addr", "", "listen address (overrides config)")
 	configPath := serveCmd.String("config", "", "path to gateway.yaml config file")
+	uiAddrFlag := serveCmd.String("ui-addr", "127.0.0.1:30200", "management UI address (empty to disable)")
 
 	if len(os.Args) < 2 {
 		fmt.Fprintf(os.Stderr, "Usage: gateway <command> [flags]\n")
@@ -40,7 +42,7 @@ func main() {
 	switch os.Args[1] {
 	case "serve":
 		serveCmd.Parse(os.Args[2:])
-		if err := runServe(*addr, *phpFPM, *configPath, serveCmd.Args()); err != nil {
+		if err := runServe(*addr, *phpFPM, *configPath, serveCmd.Args(), *uiAddrFlag); err != nil {
 			slog.Error("serve failed", "error", err)
 			os.Exit(1)
 		}
@@ -54,7 +56,7 @@ func main() {
 	}
 }
 
-func runServe(flagAddr, phpFPMPath, configPath string, args []string) error {
+func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr string) error {
 	// Load config.
 	cfg := config.DefaultConfig()
 	if configPath != "" {
@@ -158,6 +160,22 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string) error {
 			slog.Info("php-fpm started", "socket", sockPath)
 			defer fpm.Stop(context.Background())
 		}
+	}
+
+	// Start management UI server.
+	uiCfg := ui.DefaultConfig()
+	if uiAddr != "" {
+		uiCfg.Addr = uiAddr
+	}
+	statusProvider := ui.NewStatusProvider(buildinfo.Get().Version, cfg.Server.Addr, absRoot, framework)
+	statusProvider.Runtimes = detectRuntimes(cfg.PHP.Binary)
+
+	uiServer := ui.NewServer(uiCfg, slog.Default(), statusProvider)
+	if err := uiServer.Start(); err != nil {
+		slog.Warn("could not start management UI", "error", err)
+	} else {
+		slog.Info("management UI started", "addr", ui.FormatAddr(uiCfg.Addr))
+		defer uiServer.Stop()
 	}
 
 	logger := slog.Default()
@@ -438,6 +456,21 @@ func resolveScript(docRoot, normalized string) (scriptName, scriptPath string) {
 		}
 	}
 	return "", ""
+}
+
+func detectRuntimes(binary string) []string {
+	runtimes := []string{}
+	// Check common PHP-FPM binary names
+	for _, v := range []string{"8.3", "8.2", "8.1", "8.0"} {
+		path := "/usr/sbin/php-fpm" + v
+		if _, err := os.Stat(path); err == nil {
+			runtimes = append(runtimes, v)
+		}
+	}
+	if len(runtimes) == 0 && binary != "" {
+		runtimes = append(runtimes, "unknown")
+	}
+	return runtimes
 }
 
 func detectFramework(root string) (framework, docRoot string) {
