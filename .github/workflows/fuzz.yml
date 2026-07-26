@@ -34,41 +34,39 @@ env:
 
 jobs:
   fuzz:
-    name: Fuzz
+    name: "Fuzz ${{ matrix.label }}"
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: "filesystem — PathParser"
+          - label: "filesystem — PathParser"
             target: FuzzPathParser
             pkg: ./internal/filesystem/...
-          - name: "filesystem — PathResolver"
+          - label: "filesystem — PathResolver"
             target: FuzzPathResolverInputs
             pkg: ./internal/filesystem/...
-          - name: "router — RewriteEngine"
+          - label: "router — RewriteEngine"
             target: FuzzRewriteEngine
             pkg: ./internal/router/...
-          - name: "fastcgi — RecordParser"
+          - label: "fastcgi — RecordParser"
             target: FuzzFastCGIRecordParser
             pkg: ./internal/php/fastcgi/...
-          - name: "fastcgi — Params"
+          - label: "fastcgi — Params"
             target: FuzzFastCGIParams
             pkg: ./internal/php/fastcgi/...
-          - name: "cgi — ResponseHeaders"
+          - label: "cgi — ResponseHeaders"
             target: FuzzCGIResponseHeaders
             pkg: ./internal/php/cgi/...
-          - name: "diagnostics — HtaccessTranslator"
+          - label: "diagnostics — HtaccessTranslator"
             target: FuzzHtaccessTranslator
             pkg: ./internal/diagnostics/...
-          - name: "policy — ByteSizeParser"
+          - label: "policy — ByteSizeParser"
             target: FuzzByteSizeParser
             pkg: ./internal/policy/...
-          - name: "policy — DurationParser"
+          - label: "policy — DurationParser"
             target: FuzzDurationParser
             pkg: ./internal/policy/...
-
-    name: "Fuzz ${{ matrix.name }}"
     steps:
       - uses: actions/checkout@v4
 

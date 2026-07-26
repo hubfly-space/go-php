@@ -3,8 +3,10 @@
 package fastcgi
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -17,9 +19,63 @@ func TestFPMIntegration(t *testing.T) {
 		t.Skip("skipping FPM integration test in short mode")
 	}
 
-	socketPath := findFPM()
-	if socketPath == "" {
+	fpmBin := findFPMBinary()
+	if fpmBin == "" {
 		t.Skip("php-fpm not found, skipping integration test")
+	}
+
+	// Start FPM with a socket.
+	tempDir := t.TempDir()
+	socketPath := filepath.Join(tempDir, "php-fpm.sock")
+	pidFile := filepath.Join(tempDir, "php-fpm.pid")
+	errorLog := filepath.Join(tempDir, "php-fpm.log")
+	confFile := filepath.Join(tempDir, "php-fpm.conf")
+
+	conf := fmt.Sprintf(`
+[global]
+pid = %s
+error_log = %s
+daemonize = no
+
+[www]
+listen = %s
+listen.mode = 0666
+user = %s
+group = %s
+pm = dynamic
+pm.max_children = 5
+pm.start_servers = 1
+pm.min_spare_servers = 1
+pm.max_spare_servers = 2
+pm.max_requests = 500
+security.limit_extensions = .php
+`, pidFile, errorLog, socketPath, detectUser(), detectGroup())
+
+	if err := os.WriteFile(confFile, []byte(conf), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(fpmBin, "-y", confFile)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("failed to start php-fpm: %v", err)
+	}
+	defer func() {
+		cmd.Process.Kill()
+		cmd.Wait()
+	}()
+
+	// Wait for socket to appear.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(socketPath); err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if _, err := os.Stat(socketPath); err != nil {
+		t.Fatalf("php-fpm socket did not appear within 5 seconds: %v", err)
 	}
 
 	client, err := NewClient(socketPath, 5*time.Second)
@@ -28,8 +84,8 @@ func TestFPMIntegration(t *testing.T) {
 	}
 	defer client.Close()
 
-	tempDir := t.TempDir()
-	phpFile := tempDir + "/test.php"
+	phpDir := t.TempDir()
+	phpFile := filepath.Join(phpDir, "test.php")
 	phpContent := `<?php
 header('X-Test-Header: hello');
 header('Content-Type: text/plain');
@@ -48,7 +104,7 @@ echo 'Hello from PHP ' . PHP_VERSION;
 			"REQUEST_URI":       "/test.php",
 			"SCRIPT_FILENAME":   phpFile,
 			"SCRIPT_NAME":       "/test.php",
-			"DOCUMENT_ROOT":     tempDir,
+			"DOCUMENT_ROOT":     phpDir,
 			"SERVER_NAME":       "localhost",
 			"SERVER_PORT":       "80",
 			"REMOTE_ADDR":       "127.0.0.1",
@@ -73,7 +129,7 @@ echo 'Hello from PHP ' . PHP_VERSION;
 	})
 
 	t.Run("post_request", func(t *testing.T) {
-		postPHP := tempDir + "/post.php"
+		postPHP := filepath.Join(phpDir, "post.php")
 		os.WriteFile(postPHP, []byte(`<?php
 header('Content-Type: application/json');
 echo json_encode($_POST);
@@ -86,7 +142,7 @@ echo json_encode($_POST);
 			"REQUEST_URI":       "/post.php",
 			"SCRIPT_FILENAME":   postPHP,
 			"SCRIPT_NAME":       "/post.php",
-			"DOCUMENT_ROOT":     tempDir,
+			"DOCUMENT_ROOT":     phpDir,
 			"CONTENT_TYPE":      "application/x-www-form-urlencoded",
 			"CONTENT_LENGTH":    "11",
 			"SERVER_NAME":       "localhost",
@@ -103,7 +159,7 @@ echo json_encode($_POST);
 	})
 
 	t.Run("error_output", func(t *testing.T) {
-		errorPHP := tempDir + "/error.php"
+		errorPHP := filepath.Join(phpDir, "error.php")
 		os.WriteFile(errorPHP, []byte(`<?php
 fwrite(STDERR, "error message\n");
 echo 'partial output';
@@ -117,7 +173,7 @@ trigger_error("test warning", E_USER_WARNING);
 			"REQUEST_URI":       "/error.php",
 			"SCRIPT_FILENAME":   errorPHP,
 			"SCRIPT_NAME":       "/error.php",
-			"DOCUMENT_ROOT":     tempDir,
+			"DOCUMENT_ROOT":     phpDir,
 			"SERVER_NAME":       "localhost",
 			"REMOTE_ADDR":       "127.0.0.1",
 		}
@@ -132,7 +188,7 @@ trigger_error("test warning", E_USER_WARNING);
 	})
 
 	t.Run("timeout", func(t *testing.T) {
-		slowPHP := tempDir + "/slow.php"
+		slowPHP := filepath.Join(phpDir, "slow.php")
 		os.WriteFile(slowPHP, []byte(`<?php
 usleep(500000);
 echo 'done';
@@ -145,7 +201,7 @@ echo 'done';
 			"REQUEST_URI":       "/slow.php",
 			"SCRIPT_FILENAME":   slowPHP,
 			"SCRIPT_NAME":       "/slow.php",
-			"DOCUMENT_ROOT":     tempDir,
+			"DOCUMENT_ROOT":     phpDir,
 			"SERVER_NAME":       "localhost",
 			"REMOTE_ADDR":       "127.0.0.1",
 		}
@@ -164,11 +220,22 @@ echo 'done';
 	})
 }
 
-func findFPM() string {
+func findFPMBinary() string {
 	for _, name := range []string{"php-fpm8.3", "php-fpm8.2", "php-fpm8.1", "php-fpm8.0", "php-fpm"} {
 		if path, err := exec.LookPath(name); err == nil {
 			return path
 		}
 	}
 	return ""
+}
+
+func detectUser() string {
+	if u := os.Getenv("USER"); u != "" {
+		return u
+	}
+	return "nobody"
+}
+
+func detectGroup() string {
+	return "nogroup"
 }

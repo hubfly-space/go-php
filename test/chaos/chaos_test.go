@@ -9,7 +9,6 @@
 package chaos
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"os"
@@ -154,34 +153,40 @@ func TestConcurrentDeployAndRollback(t *testing.T) {
 
 // TestTimeoutDuringFPMConnection simulates FPM connection timeout.
 func TestTimeoutDuringFPMConnection(t *testing.T) {
-	// Create a server that never responds.
+	// Create a server that accepts but never responds.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ln.Close()
 
-	// Accept but never respond.
 	go func() {
 		for {
 			conn, err := ln.Accept()
 			if err != nil {
 				return
 			}
-			// Hold connection open forever.
-			time.Sleep(10 * time.Second)
+			// Hold connection open forever, never write anything.
+			time.Sleep(30 * time.Second)
 			conn.Close()
 		}
 	}()
 
-	// Try to connect with a short timeout.
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
+	// Connect to the server (succeeds because listener accepts).
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+	defer conn.Close()
 
-	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", ln.Addr().String())
+	// Set a short deadline on read — this should timeout because server never responds.
+	conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	buf := make([]byte, 1024)
+	_, err = conn.Read(buf)
 	if err == nil {
-		conn.Close()
-		t.Error("expected timeout error")
+		t.Error("expected timeout error on read, got none")
+	} else {
+		t.Logf("got expected error: %v", err)
 	}
 }
 

@@ -9,6 +9,7 @@
 package security
 
 import (
+	"io"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/go-php/gateway/internal/filesystem"
+	"github.com/go-php/gateway/internal/php/cgi"
 	"github.com/go-php/gateway/internal/policy"
 )
 
@@ -139,39 +141,30 @@ func TestScriptConfusion(t *testing.T) {
 	t.Logf("upload.jpg accessible (not PHP, should not execute)")
 }
 
-// TestResponseAttackHeaders verifies malicious headers from PHP are stripped.
+// TestResponseAttackHeaders verifies malicious headers from PHP are rejected.
 func TestResponseAttackHeaders(t *testing.T) {
-	// Test that response headers with control characters are rejected.
-	headers := "X-Evil: \x00injection\r\nX-Good: safe-value\r\n\r\n"
+	// A response with a control character in a header value MUST be rejected by the parser.
+	rawResponse := "X-Evil: \x00injection\r\nX-Good: safe-value\r\nContent-Type: text/plain\r\n\r\nHello"
+	_, err := cgi.ParseResponse([]byte(rawResponse), nil)
+	if err == nil {
+		t.Fatal("expected ParseResponse to reject response with control character in header, but it succeeded")
+	}
+	t.Logf("correctly rejected: %v", err)
 
-	// Parse as CGI headers.
-	for _, line := range strings.Split(headers, "\r\n") {
-		if line == "" {
-			break
-		}
+	// A clean response should parse fine.
+	cleanResponse := "X-Good: safe-value\r\nContent-Type: text/plain\r\n\r\nHello"
+	parsed, err := cgi.ParseResponse([]byte(cleanResponse), nil)
+	if err != nil {
+		t.Fatalf("ParseResponse failed on clean response: %v", err)
+	}
 
-		parts := strings.SplitN(line, ": ", 2)
-		if len(parts) != 2 {
-			continue
-		}
+	if got := parsed.Headers.Get("X-Good"); got != "safe-value" {
+		t.Errorf("X-Good header: got %q, want %q", got, "safe-value")
+	}
 
-		name, value := parts[0], parts[1]
-
-		// Check for control characters in header name.
-		for _, c := range name {
-			if c < 32 || c > 126 {
-				t.Errorf("control character in header name: %q", name)
-				break
-			}
-		}
-
-		// Check for control characters in header value (except HTAB).
-		for _, c := range value {
-			if (c < 32 && c != 9) || c > 126 {
-				t.Errorf("control character in header value for %s: %q", name, value)
-				break
-			}
-		}
+	body, _ := io.ReadAll(parsed.Body)
+	if !strings.Contains(string(body), "Hello") {
+		t.Errorf("body should contain 'Hello', got %q", string(body))
 	}
 }
 
