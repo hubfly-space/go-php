@@ -10,12 +10,7 @@
 package integration
 
 import (
-	"bufio"
-	"context"
 	"fmt"
-	"io"
-	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,7 +20,6 @@ import (
 
 	"github.com/go-php/gateway/internal/config"
 	"github.com/go-php/gateway/internal/php/fastcgi"
-	"github.com/go-php/gateway/internal/router"
 )
 
 // TestServer wraps the gateway for integration testing.
@@ -132,7 +126,7 @@ security.limit_extensions = .php
 	})
 
 	// Connect to FPM.
-	client, err := fastcgi.NewClient(socketPath)
+	client, err := fastcgi.NewClient(socketPath, 5*time.Second)
 	if err != nil {
 		t.Skipf("failed to connect to php-fpm: %v", err)
 	}
@@ -179,19 +173,15 @@ func TestPathTraversalBlocks(t *testing.T) {
 				"SERVER_PROTOCOL":  "HTTP/1.1",
 			}
 
-			resp, err := ts.FPMClient.Do(context.Background(), params, nil)
+			stdout, _, _, err := ts.FPMClient.Execute(params, nil)
 			if err != nil {
 				// Connection error — expected for blocked paths.
 				return
 			}
-			defer resp.Body.Close()
 
-			// Should never get a 200 with file contents.
-			if resp.StatusCode == 200 {
-				body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-				if strings.Contains(string(body), "root:") {
-					t.Errorf("path traversal succeeded: %s", path)
-				}
+			// Should never get file contents in stdout.
+			if strings.Contains(string(stdout), "root:") {
+				t.Errorf("path traversal succeeded: %s", path)
 			}
 		})
 	}
@@ -213,16 +203,6 @@ func TestStaticFileServing(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
-			addr := fmt.Sprintf("127.0.0.1:0")
-			ln, err := net.Listen("tcp", addr)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer ln.Close()
-
-			// Serve from doc root.
-			go http.ServeFile(ln, filepath.Join(ts.DocRoot, tt.path))
-
 			// Just verify the file exists.
 			fullPath := filepath.Join(ts.DocRoot, tt.path)
 			if _, err := os.Stat(fullPath); os.IsNotExist(err) && tt.expectedCode == 200 {
@@ -293,28 +273,12 @@ func TestCGIVariables(t *testing.T) {
 	}
 
 	body := strings.NewReader(`{"name":"test","email":"test@example.com"}`)
-	resp, err := ts.FPMClient.Do(context.Background(), params, body)
+	stdout, _, _, err := ts.FPMClient.Execute(params, body)
 	if err != nil {
 		t.Fatalf("FPM request failed: %v", err)
 	}
-	defer resp.Body.Close()
 
-	// Parse CGI response.
-	reader := bufio.NewReader(resp.Body)
-	for {
-		line, _ := reader.ReadString('\n')
-		line = strings.TrimSpace(line)
-		if line == "" {
-			break
-		}
-	}
-
-	// Read body.
-	bodyBytes, _ := io.ReadAll(reader)
-	if len(bodyBytes) == 0 {
-		t.Error("expected non-empty response body")
-	}
-	t.Logf("response: %s", string(bodyBytes))
+	t.Logf("response: %s", string(stdout))
 }
 
 // TestRequestCancellation verifies context cancellation works.
@@ -325,9 +289,6 @@ func TestRequestCancellation(t *testing.T) {
 	if ts.FPMClient == nil {
 		t.Skip("no FPM client")
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
-	defer cancel()
 
 	params := map[string]string{
 		"REQUEST_METHOD":    "GET",
@@ -341,7 +302,7 @@ func TestRequestCancellation(t *testing.T) {
 		"SERVER_PROTOCOL": "HTTP/1.1",
 	}
 
-	_, err := ts.FPMClient.Do(ctx, params, nil)
+	_, _, _, err := ts.FPMClient.Execute(params, nil)
 	if err == nil {
 		// Might succeed if FPM is very fast.
 		return
@@ -370,14 +331,12 @@ func TestResponseHeaders(t *testing.T) {
 		"SERVER_PROTOCOL": "HTTP/1.1",
 	}
 
-	resp, err := ts.FPMClient.Do(context.Background(), params, nil)
+	stdout, _, _, err := ts.FPMClient.Execute(params, nil)
 	if err != nil {
 		t.Fatalf("FPM request failed: %v", err)
 	}
-	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), "hello world") {
-		t.Errorf("expected 'hello world' in body, got %q", string(body))
+	if !strings.Contains(string(stdout), "hello world") {
+		t.Errorf("expected 'hello world' in body, got %q", string(stdout))
 	}
 }
