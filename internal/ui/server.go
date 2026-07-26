@@ -33,7 +33,6 @@ type Server struct {
 	mux       *http.ServeMux
 	server    *http.Server
 	logBuffer *LogBuffer
-	mu        sync.Mutex
 }
 
 // NewServer creates a new UI server.

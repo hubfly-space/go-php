@@ -7,13 +7,11 @@ import (
 
 // NetworkPolicy controls outbound network access.
 type NetworkPolicy struct {
-	mu             sync.RWMutex
-	allowList      []net.IP // nil = allow all
-	denyPrivate    bool
-	denyLoopback   bool
-	denyRanges     []*net.IPNet
-	allowedDomains []string
-	deniedDomains  []string
+	mu           sync.RWMutex
+	allowList    []net.IP // nil = allow all
+	denyPrivate  bool
+	denyLoopback bool
+	denyRanges   []*net.IPNet
 }
 
 // NewNetworkPolicy creates a network policy.

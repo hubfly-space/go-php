@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"os"
 	"runtime"
-	"sort"
 	"sync/atomic"
 	"time"
 
@@ -27,10 +26,7 @@ type StatusProvider struct {
 	AvgResponseMs  atomic.Int64
 	LastRequest    atomic.Pointer[time.Time]
 	Sites          atomic.Pointer[[]SiteConfig]
-	mu             syncStatus
 }
-
-type syncStatus struct{}
 
 // Goroutines returns the current goroutine count.
 func (sp *StatusProvider) Goroutines() int {
@@ -440,9 +436,4 @@ func generateID(name string) string {
 		id = "site"
 	}
 	return id
-}
-
-// Sort strings helper.
-func sortStrings(s []string) {
-	sort.Strings(s)
 }

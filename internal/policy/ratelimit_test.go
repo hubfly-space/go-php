@@ -85,13 +85,13 @@ func TestPerRouteLimiterMiddleware(t *testing.T) {
 func TestBucketStatus(t *testing.T) {
 	rl := NewRateLimiter(10, 10)
 
-	tokens, ok := rl.BucketStatus("nonexistent")
+	_, ok := rl.BucketStatus("nonexistent")
 	if ok {
 		t.Error("expected no bucket for nonexistent key")
 	}
 
 	rl.Allow("key")
-	tokens, ok = rl.BucketStatus("key")
+	tokens, ok := rl.BucketStatus("key")
 	if !ok {
 		t.Fatal("expected bucket for key")
 	}
