@@ -316,25 +316,25 @@
 > Goal: Immutable releases, zero-downtime switching, rollback, hooks.
 
 ### Immutable Releases
-- [ ] Release directory structure
-- [ ] Atomic release activation
+- [x] Release directory structure — `releases/archive/<id>/`, `releases/active` symlink
+- [x] Atomic release activation — `os.Symlink` + `os.Rename` (atomic swap)
 - [ ] Shared writable paths
-- [ ] Release metadata and state
+- [x] Release metadata and state — `Release` struct with JSON persistence
 
 ### Zero-Downtime PHP Version Switching
-- [ ] Blue/green pool model
-- [ ] Install candidate → generate config → start → probe → activate → drain old
-- [ ] Atomic routing via snapshot swap
-- [ ] Health checks: PHP version, extensions, FastCGI, application /health
-- [ ] Rollback on failure
+- [x] Blue/green pool model — `Switcher.Deploy()` creates, probes, activates, drains
+- [x] Install candidate → generate config → start → probe → activate → drain old
+- [x] Atomic routing via snapshot swap — symlink swap in `ReleaseManager.Activate()`
+- [x] Health checks: PHP version, extensions, FastCGI, application /health — `Prober.Probe()`
+- [x] Rollback on failure — `Switcher.Rollback()`, `ReleaseManager.Rollback()`
 - [ ] Canary switching (optional, advanced)
 
 ### Deploy Hooks
-- [ ] Pre/post activate hooks (argument arrays, not shell strings)
-- [ ] Timeout, working directory, controlled environment
-- [ ] Output limit, audit log
-- [ ] Allowed executable policy
-- [ ] Never run hooks from untrusted HTTP requests
+- [x] Pre/post activate hooks (argument arrays, not shell strings) — `HookRunner` with `HookConfig`
+- [x] Timeout, working directory, controlled environment — per-hook timeout, WorkDir, Env
+- [x] Output limit, audit log — `HookAuditLog` with 100-entry ring buffer, stdout/stderr capture
+- [x] Allowed executable policy — shell metacharacter rejection (`;|&$\``)
+- [x] Never run hooks from untrusted HTTP requests — hooks only run via `Switcher.Deploy()`
 
 ### Deploy CLI
 - [ ] `gateway deploy create`
@@ -343,8 +343,8 @@
 - [ ] `gateway deploy list`
 
 ### Exit Criteria — Phase 4
-- [ ] Crash recovery at every activation step
-- [ ] No broken active release after interrupted operation
+- [x] Crash recovery at every activation step — atomic symlink swap, fail-safe on each step
+- [x] No broken active release after interrupted operation — atomic rename, state persistence
 
 ---
 
