@@ -11,8 +11,8 @@ import (
 
 // Registry manages installed PHP runtimes.
 type Registry struct {
-	Root     string // e.g. ~/.gateway/runtimes
-	Current  string // path to "current" symlink
+	Root    string // e.g. ~/.gateway/runtimes
+	Current string // path to "current" symlink
 }
 
 // NewRegistry creates a registry at the given root.
@@ -62,10 +62,10 @@ func (r *Registry) Install(manifest *Manifest, srcDir string) (*Runtime, error) 
 	}
 
 	rt := &Runtime{
-		ID:         id,
-		Version:    manifest.Version,
-		Platform:   manifest.Platform,
-		Arch:       manifest.Arch,
+		ID:          id,
+		Version:     manifest.Version,
+		Platform:    manifest.Platform,
+		Arch:        manifest.Arch,
 		BuildFlavor: manifest.Flavor,
 	}
 

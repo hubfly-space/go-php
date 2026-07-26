@@ -14,10 +14,10 @@ import (
 
 // SignedIndex represents a cryptographically signed runtime index.
 type SignedIndex struct {
-	Index     *Index   `json:"index"`
-	Signature string   `json:"signature"` // hex-encoded Ed25519 signature
-	KeyID     string   `json:"key_id"`    // identifies the signing key
-	Timestamp string   `json:"timestamp"`
+	Index     *Index `json:"index"`
+	Signature string `json:"signature"` // hex-encoded Ed25519 signature
+	KeyID     string `json:"key_id"`    // identifies the signing key
+	Timestamp string `json:"timestamp"`
 }
 
 // IndexFetcher fetches and verifies signed runtime indexes.
@@ -31,8 +31,8 @@ type IndexFetcher struct {
 func NewIndexFetcher(pubKey ed25519.PublicKey, cacheDir string) *IndexFetcher {
 	return &IndexFetcher{
 		PublicKey: pubKey,
-		Client:   &http.Client{Timeout: 30 * time.Second},
-		CacheDir: cacheDir,
+		Client:    &http.Client{Timeout: 30 * time.Second},
+		CacheDir:  cacheDir,
 	}
 }
 

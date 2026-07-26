@@ -14,12 +14,12 @@ import (
 // IsolationConfig configures OS-level isolation for PHP processes.
 type IsolationConfig struct {
 	Enabled     bool   `yaml:"enabled"`
-	Mode        string `yaml:"mode"`        // "none", "process", "namespace", "cgroup"
-	User        string `yaml:"user"`        // drop privileges to this user
-	ChrootDir   string `yaml:"chroot_dir"`  // chroot directory
-	CgroupPath  string `yaml:"cgroup_path"` // cgroup v2 path
+	Mode        string `yaml:"mode"`         // "none", "process", "namespace", "cgroup"
+	User        string `yaml:"user"`         // drop privileges to this user
+	ChrootDir   string `yaml:"chroot_dir"`   // chroot directory
+	CgroupPath  string `yaml:"cgroup_path"`  // cgroup v2 path
 	MemoryLimit string `yaml:"memory_limit"` // e.g. "256M"
-	CPULimit   string `yaml:"cpu_limit"`    // e.g. "0.5" (half a CPU)
+	CPULimit    string `yaml:"cpu_limit"`    // e.g. "0.5" (half a CPU)
 	PIDLimit    int    `yaml:"pid_limit"`    // max processes
 	NoNewPrivs  bool   `yaml:"no_new_privs"` // prctl(PR_SET_NO_NEW_PRIVS)
 }
@@ -27,10 +27,10 @@ type IsolationConfig struct {
 // DefaultIsolationConfig returns safe defaults.
 func DefaultIsolationConfig() *IsolationConfig {
 	return &IsolationConfig{
-		Enabled:  false,
-		Mode:     "process",
+		Enabled:    false,
+		Mode:       "process",
 		NoNewPrivs: true,
-		PIDLimit: 64,
+		PIDLimit:   64,
 	}
 }
 
@@ -143,8 +143,8 @@ func (iso *Isolator) credential() *syscall.Credential {
 	// In production, look up the user by name and set UID/GID.
 	// For now, use nobody (65534) as a safe default.
 	return &syscall.Credential{
-		Uid:  65534,
-		Gid:  65534,
+		Uid:         65534,
+		Gid:         65534,
 		NoSetGroups: true,
 	}
 }

@@ -7,8 +7,8 @@ import (
 
 func TestIsolator_ApplyProcessIsolation(t *testing.T) {
 	config := &IsolationConfig{
-		Enabled:  true,
-		Mode:     "process",
+		Enabled:    true,
+		Mode:       "process",
 		NoNewPrivs: true,
 	}
 
