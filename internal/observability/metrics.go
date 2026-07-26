@@ -17,8 +17,8 @@ type Metrics struct {
 	responseTimeSum atomic.Int64 // microseconds
 	responseCount   atomic.Int64
 
-	startTime time.Time
-	mu        sync.RWMutex
+	startTime  time.Time
+	mu         sync.RWMutex
 	histograms map[string]*Histogram
 }
 

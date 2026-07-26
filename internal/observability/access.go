@@ -9,8 +9,8 @@ import (
 // ResponseWriter wraps http.ResponseWriter to capture status and bytes.
 type ResponseWriter struct {
 	http.ResponseWriter
-	status     int
-	written    int64
+	status      int
+	written     int64
 	wroteHeader bool
 }
 

@@ -12,10 +12,10 @@ import (
 
 // SecretRedactor wraps a slog.Handler and redacts sensitive values from log output.
 type SecretRedactor struct {
-	next       slog.Handler
-	patterns   []*regexp.Regexp
-	mu         sync.RWMutex
-	exactKeys  map[string]bool
+	next      slog.Handler
+	patterns  []*regexp.Regexp
+	mu        sync.RWMutex
+	exactKeys map[string]bool
 }
 
 // NewSecretRedactor creates a log handler that redacts secrets.

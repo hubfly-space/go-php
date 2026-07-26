@@ -19,16 +19,16 @@ type SpanID string
 
 // Span represents a unit of work within a trace.
 type Span struct {
-	TraceID    TraceID            `json:"trace_id"`
-	SpanID     SpanID             `json:"span_id"`
-	ParentID   SpanID             `json:"parent_id,omitempty"`
-	Name       string             `json:"name"`
-	StartTime  time.Time          `json:"start_time"`
-	EndTime    time.Time          `json:"end_time,omitempty"`
-	Duration   time.Duration      `json:"duration,omitempty"`
-	Status     string             `json:"status"`
-	Attributes map[string]string  `json:"attributes,omitempty"`
-	Events     []SpanEvent        `json:"events,omitempty"`
+	TraceID    TraceID           `json:"trace_id"`
+	SpanID     SpanID            `json:"span_id"`
+	ParentID   SpanID            `json:"parent_id,omitempty"`
+	Name       string            `json:"name"`
+	StartTime  time.Time         `json:"start_time"`
+	EndTime    time.Time         `json:"end_time,omitempty"`
+	Duration   time.Duration     `json:"duration,omitempty"`
+	Status     string            `json:"status"`
+	Attributes map[string]string `json:"attributes,omitempty"`
+	Events     []SpanEvent       `json:"events,omitempty"`
 }
 
 // SpanEvent is a timestamped event within a span.
