@@ -1,6 +1,7 @@
 package observability
 
 import (
+	"context"
 	"log/slog"
 	"testing"
 )
@@ -56,7 +57,7 @@ func TestSecretRedactor_Handler(t *testing.T) {
 		nil,
 	)
 
-	if !redactor.Enabled(nil, slog.LevelInfo) {
+	if !redactor.Enabled(context.TODO(), slog.LevelInfo) {
 		t.Error("expected Enabled to return true")
 	}
 }

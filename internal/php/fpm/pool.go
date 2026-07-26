@@ -53,39 +53,39 @@ func DefaultPoolConfig(name string) *PoolConfig {
 func (c *PoolConfig) Generate() string {
 	var b strings.Builder
 
-	b.WriteString(fmt.Sprintf("[%s]\n", c.Name))
+	fmt.Fprintf(&b, "[%s]\n", c.Name)
 
 	// User/Group.
 	if c.User != "" {
-		b.WriteString(fmt.Sprintf("user = %s\n", c.User))
+		fmt.Fprintf(&b, "user = %s\n", c.User)
 	}
 	if c.Group != "" {
-		b.WriteString(fmt.Sprintf("group = %s\n", c.Group))
+		fmt.Fprintf(&b, "group = %s\n", c.Group)
 	}
 
 	// Listen.
 	if c.SocketPath != "" {
-		b.WriteString(fmt.Sprintf("listen = %s\n", c.SocketPath))
+		fmt.Fprintf(&b, "listen = %s\n", c.SocketPath)
 		if c.ListenMode != "" {
-			b.WriteString(fmt.Sprintf("listen.mode = %s\n", c.ListenMode))
+			fmt.Fprintf(&b, "listen.mode = %s\n", c.ListenMode)
 		}
 	}
 
 	// Process manager.
 	b.WriteString("pm = dynamic\n")
-	b.WriteString(fmt.Sprintf("pm.max_children = %d\n", c.MaxChildren))
-	b.WriteString(fmt.Sprintf("pm.start_servers = %d\n", c.StartServers))
-	b.WriteString(fmt.Sprintf("pm.min_spare_servers = %d\n", c.MinSpare))
-	b.WriteString(fmt.Sprintf("pm.max_spare_servers = %d\n", c.MaxSpare))
-	b.WriteString(fmt.Sprintf("pm.max_requests = %d\n", c.MaxRequests))
-	b.WriteString(fmt.Sprintf("pm.process_idle_timeout = %ds\n", c.ProcessIdle))
+	fmt.Fprintf(&b, "pm.max_children = %d\n", c.MaxChildren)
+	fmt.Fprintf(&b, "pm.start_servers = %d\n", c.StartServers)
+	fmt.Fprintf(&b, "pm.min_spare_servers = %d\n", c.MinSpare)
+	fmt.Fprintf(&b, "pm.max_spare_servers = %d\n", c.MaxSpare)
+	fmt.Fprintf(&b, "pm.max_requests = %d\n", c.MaxRequests)
+	fmt.Fprintf(&b, "pm.process_idle_timeout = %ds\n", c.ProcessIdle)
 
 	// Timeouts.
-	b.WriteString(fmt.Sprintf("request_terminate_timeout = %ds\n", c.RequestTimeout))
+	fmt.Fprintf(&b, "request_terminate_timeout = %ds\n", c.RequestTimeout)
 
 	// Status.
 	if c.StatusPath != "" {
-		b.WriteString(fmt.Sprintf("pm.status_path = %s\n", c.StatusPath))
+		fmt.Fprintf(&b, "pm.status_path = %s\n", c.StatusPath)
 	}
 
 	// Security.
@@ -95,26 +95,26 @@ func (c *PoolConfig) Generate() string {
 		b.WriteString("clear_env = no\n")
 	}
 	if c.SecurityExt != "" {
-		b.WriteString(fmt.Sprintf("security.limit_extensions = %s\n", c.SecurityExt))
+		fmt.Fprintf(&b, "security.limit_extensions = %s\n", c.SecurityExt)
 	}
 
 	// PHP ini.
 	if c.PhpIniPath != "" {
-		b.WriteString(fmt.Sprintf("php_admin_value[error_log] = %s\n", c.PhpIniPath))
+		fmt.Fprintf(&b, "php_admin_value[error_log] = %s\n", c.PhpIniPath)
 	}
 
 	// Logs.
 	if c.AccessLog != "" {
-		b.WriteString(fmt.Sprintf("access.log = %s\n", c.AccessLog))
+		fmt.Fprintf(&b, "access.log = %s\n", c.AccessLog)
 		b.WriteString("access.format = \"%R - %u %t \\\"%m %r%Q%q\\\" %s %f %{mili}d %{kilo}M %C%%\"\n")
 	}
 	if c.ErrorLog != "" {
-		b.WriteString(fmt.Sprintf("php_admin_value[error_log] = %s\n", c.ErrorLog))
+		fmt.Fprintf(&b, "php_admin_value[error_log] = %s\n", c.ErrorLog)
 	}
 
 	// Custom directives.
 	for k, v := range c.CustomDirectives {
-		b.WriteString(fmt.Sprintf("php_admin_value[%s] = %s\n", k, v))
+		fmt.Fprintf(&b, "php_admin_value[%s] = %s\n", k, v)
 	}
 
 	return b.String()
@@ -140,10 +140,10 @@ func (c *PoolConfig) WritePool(dir string) (string, error) {
 func GenerateMainConfig(poolsDir string, pidFile string, errorLog string) string {
 	var b strings.Builder
 
-	b.WriteString("[global]\n")
-	b.WriteString(fmt.Sprintf("pid = %s\n", pidFile))
+	fmt.Fprintf(&b, "[global]\n")
+	fmt.Fprintf(&b, "pid = %s\n", pidFile)
 	if errorLog != "" {
-		b.WriteString(fmt.Sprintf("error_log = %s\n", errorLog))
+		fmt.Fprintf(&b, "error_log = %s\n", errorLog)
 	}
 	b.WriteString("log_level = warning\n")
 	b.WriteString("include = pools/*.conf\n")

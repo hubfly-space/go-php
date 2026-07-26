@@ -69,10 +69,10 @@ func (cl *ConfigLayering) GenerateINI() string {
 	for _, k := range keys {
 		section := sectionForDirective(k)
 		if section != currentSection {
-			b.WriteString(fmt.Sprintf("\n[%s]\n", section))
+			fmt.Fprintf(&b, "\n[%s]\n", section)
 			currentSection = section
 		}
-		b.WriteString(fmt.Sprintf("%s = %s\n", k, merged[k]))
+		fmt.Fprintf(&b, "%s = %s\n", k, merged[k])
 	}
 
 	return b.String()

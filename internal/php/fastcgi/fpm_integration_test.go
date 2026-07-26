@@ -40,8 +40,6 @@ daemonize = no
 [www]
 listen = %s
 listen.mode = 0666
-user = %s
-group = %s
 pm = dynamic
 pm.max_children = 5
 pm.start_servers = 1
@@ -49,7 +47,7 @@ pm.min_spare_servers = 1
 pm.max_spare_servers = 2
 pm.max_requests = 500
 security.limit_extensions = .php
-`, pidFile, errorLog, socketPath, detectUser(), detectGroup())
+`, pidFile, errorLog, socketPath)
 
 	if err := os.WriteFile(confFile, []byte(conf), 0644); err != nil {
 		t.Fatal(err)
@@ -78,11 +76,15 @@ security.limit_extensions = .php
 		t.Fatalf("php-fpm socket did not appear within 5 seconds: %v", err)
 	}
 
-	client, err := NewClient(socketPath, 5*time.Second)
-	if err != nil {
-		t.Fatalf("failed to connect to php-fpm at %s: %v", socketPath, err)
+	// reconnect creates a new client when FPM closes the connection.
+	reconnect := func(t *testing.T) *Client {
+		t.Helper()
+		c, err := NewClient(socketPath, 5*time.Second)
+		if err != nil {
+			t.Fatalf("failed to connect to php-fpm: %v", err)
+		}
+		return c
 	}
-	defer client.Close()
 
 	phpDir := t.TempDir()
 	phpFile := filepath.Join(phpDir, "test.php")
@@ -96,6 +98,9 @@ echo 'Hello from PHP ' . PHP_VERSION;
 	}
 
 	t.Run("basic_request", func(t *testing.T) {
+		c := reconnect(t)
+		defer c.Close()
+
 		params := map[string]string{
 			"GATEWAY_INTERFACE": "CGI/1.1",
 			"SERVER_SOFTWARE":   "test",
@@ -110,7 +115,7 @@ echo 'Hello from PHP ' . PHP_VERSION;
 			"REMOTE_ADDR":       "127.0.0.1",
 		}
 
-		stdout, stderr, endReq, err := client.Execute(params, nil)
+		stdout, stderr, endReq, err := c.Execute(params, nil)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
@@ -129,6 +134,9 @@ echo 'Hello from PHP ' . PHP_VERSION;
 	})
 
 	t.Run("post_request", func(t *testing.T) {
+		c := reconnect(t)
+		defer c.Close()
+
 		postPHP := filepath.Join(phpDir, "post.php")
 		os.WriteFile(postPHP, []byte(`<?php
 header('Content-Type: application/json');
@@ -150,7 +158,7 @@ echo json_encode($_POST);
 		}
 
 		body := strings.NewReader("name=test&value=42")
-		stdout, _, _, err := client.Execute(params, body)
+		stdout, _, _, err := c.Execute(params, body)
 		if err != nil {
 			t.Fatalf("POST request failed: %v", err)
 		}
@@ -159,6 +167,9 @@ echo json_encode($_POST);
 	})
 
 	t.Run("error_output", func(t *testing.T) {
+		c := reconnect(t)
+		defer c.Close()
+
 		errorPHP := filepath.Join(phpDir, "error.php")
 		os.WriteFile(errorPHP, []byte(`<?php
 fwrite(STDERR, "error message\n");
@@ -178,7 +189,7 @@ trigger_error("test warning", E_USER_WARNING);
 			"REMOTE_ADDR":       "127.0.0.1",
 		}
 
-		stdout, stderr, _, err := client.Execute(params, nil)
+		stdout, stderr, _, err := c.Execute(params, nil)
 		if err != nil {
 			t.Fatalf("error request failed: %v", err)
 		}
@@ -227,15 +238,4 @@ func findFPMBinary() string {
 		}
 	}
 	return ""
-}
-
-func detectUser() string {
-	if u := os.Getenv("USER"); u != "" {
-		return u
-	}
-	return "nobody"
-}
-
-func detectGroup() string {
-	return "nogroup"
 }
