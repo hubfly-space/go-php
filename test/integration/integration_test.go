@@ -163,14 +163,14 @@ func TestPathTraversalBlocks(t *testing.T) {
 			params := map[string]string{
 				"REQUEST_METHOD":    "GET",
 				"SCRIPT_FILENAME":   filepath.Join(ts.DocRoot, "index.php"),
-				"DOCUMENT_ROOT":    ts.DocRoot,
-				"REQUEST_URI":      path,
-				"SCRIPT_NAME":      "/index.php",
-				"SERVER_NAME":      "localhost",
-				"SERVER_PORT":      "80",
-				"REMOTE_ADDR":      "127.0.0.1",
+				"DOCUMENT_ROOT":     ts.DocRoot,
+				"REQUEST_URI":       path,
+				"SCRIPT_NAME":       "/index.php",
+				"SERVER_NAME":       "localhost",
+				"SERVER_PORT":       "80",
+				"REMOTE_ADDR":       "127.0.0.1",
 				"GATEWAY_INTERFACE": "CGI/1.1",
-				"SERVER_PROTOCOL":  "HTTP/1.1",
+				"SERVER_PROTOCOL":   "HTTP/1.1",
 			}
 
 			stdout, _, _, err := ts.FPMClient.Execute(params, nil)
@@ -254,22 +254,22 @@ func TestCGIVariables(t *testing.T) {
 
 	params := map[string]string{
 		"REQUEST_METHOD":    "POST",
-		"SCRIPT_FILENAME":  filepath.Join(ts.DocRoot, "index.php"),
-		"DOCUMENT_ROOT":   ts.DocRoot,
-		"REQUEST_URI":     "/api/users?page=1",
-		"SCRIPT_NAME":     "/index.php",
-		"PATH_INFO":       "/api/users",
-		"QUERY_STRING":    "page=1",
-		"SERVER_NAME":     "example.com",
-		"SERVER_PORT":     "443",
-		"REMOTE_ADDR":     "192.168.1.100",
-		"HTTPS":           "on",
-		"CONTENT_TYPE":    "application/json",
-		"CONTENT_LENGTH":  "27",
+		"SCRIPT_FILENAME":   filepath.Join(ts.DocRoot, "index.php"),
+		"DOCUMENT_ROOT":     ts.DocRoot,
+		"REQUEST_URI":       "/api/users?page=1",
+		"SCRIPT_NAME":       "/index.php",
+		"PATH_INFO":         "/api/users",
+		"QUERY_STRING":      "page=1",
+		"SERVER_NAME":       "example.com",
+		"SERVER_PORT":       "443",
+		"REMOTE_ADDR":       "192.168.1.100",
+		"HTTPS":             "on",
+		"CONTENT_TYPE":      "application/json",
+		"CONTENT_LENGTH":    "27",
 		"GATEWAY_INTERFACE": "CGI/1.1",
-		"SERVER_PROTOCOL": "HTTP/1.1",
-		"HTTP_HOST":       "example.com",
-		"HTTP_USER_AGENT": "TestAgent/1.0",
+		"SERVER_PROTOCOL":   "HTTP/1.1",
+		"HTTP_HOST":         "example.com",
+		"HTTP_USER_AGENT":   "TestAgent/1.0",
 	}
 
 	body := strings.NewReader(`{"name":"test","email":"test@example.com"}`)
@@ -292,14 +292,14 @@ func TestRequestCancellation(t *testing.T) {
 
 	params := map[string]string{
 		"REQUEST_METHOD":    "GET",
-		"SCRIPT_FILENAME":  filepath.Join(ts.DocRoot, "index.php"),
-		"DOCUMENT_ROOT":   ts.DocRoot,
-		"REQUEST_URI":     "/",
-		"SCRIPT_NAME":     "/index.php",
-		"SERVER_NAME":     "localhost",
-		"REMOTE_ADDR":     "127.0.0.1",
+		"SCRIPT_FILENAME":   filepath.Join(ts.DocRoot, "index.php"),
+		"DOCUMENT_ROOT":     ts.DocRoot,
+		"REQUEST_URI":       "/",
+		"SCRIPT_NAME":       "/index.php",
+		"SERVER_NAME":       "localhost",
+		"REMOTE_ADDR":       "127.0.0.1",
 		"GATEWAY_INTERFACE": "CGI/1.1",
-		"SERVER_PROTOCOL": "HTTP/1.1",
+		"SERVER_PROTOCOL":   "HTTP/1.1",
 	}
 
 	_, _, _, err := ts.FPMClient.Execute(params, nil)
@@ -321,14 +321,14 @@ func TestResponseHeaders(t *testing.T) {
 
 	params := map[string]string{
 		"REQUEST_METHOD":    "GET",
-		"SCRIPT_FILENAME":  filepath.Join(ts.DocRoot, "hello.php"),
-		"DOCUMENT_ROOT":   ts.DocRoot,
-		"REQUEST_URI":     "/hello.php",
-		"SCRIPT_NAME":     "/hello.php",
-		"SERVER_NAME":     "localhost",
-		"REMOTE_ADDR":     "127.0.0.1",
+		"SCRIPT_FILENAME":   filepath.Join(ts.DocRoot, "hello.php"),
+		"DOCUMENT_ROOT":     ts.DocRoot,
+		"REQUEST_URI":       "/hello.php",
+		"SCRIPT_NAME":       "/hello.php",
+		"SERVER_NAME":       "localhost",
+		"REMOTE_ADDR":       "127.0.0.1",
 		"GATEWAY_INTERFACE": "CGI/1.1",
-		"SERVER_PROTOCOL": "HTTP/1.1",
+		"SERVER_PROTOCOL":   "HTTP/1.1",
 	}
 
 	stdout, _, _, err := ts.FPMClient.Execute(params, nil)
