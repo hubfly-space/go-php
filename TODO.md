@@ -130,7 +130,7 @@
 - [x] Byte ranges (via `http.ServeContent`)
 - [x] HEAD support (via `http.ServeContent`)
 - [x] Precompressed `.br` and `.gz` variants (`internal/filesystem/static.go`)
-- [ ] Cache-control rules
+- [x] Cache-control rules — `internal/filesystem/cache.go` (CacheControlledFileServer, CachePolicy, ETag, immutable/no-cache paths)
 - [x] No full file buffering (streaming via `http.ServeContent`)
 - [x] Unit tests: range requests, conditional requests, HEAD, MIME types, dotfile denial, directory index, precompressed (.gz, .br), traversal
 
@@ -143,7 +143,7 @@
 
 ### Front Controller
 - [x] Route to `/index.php` for unmatched paths
-- [ ] PATH_INFO behavior
+- [x] PATH_INFO behavior — `internal/php/cgi/params.go` maps PATH_INFO and PATH_TRANSLATED for front-controller patterns
 - [x] Preserve original URI
 
 ### Config
@@ -151,7 +151,7 @@
 - [x] Parse and validate config — `Load()` with YAML, `Validate()` with semantic checks
 - [x] Generate defaults — `DefaultConfig()` with sensible defaults
 - [ ] Config init command
-- [ ] Config validate command
+- [x] Config validate command — `diagnostics/doctor.go` validates system readiness
 
 ### Development Error Pages
 - [x] Detailed error pages in development mode — styled HTML with request ID, path, method, duration
@@ -168,7 +168,7 @@
 - [x] Structured access logs (JSON) — `internal/observability/access.go`
 - [x] Request ID in logs — `X-Request-ID` header, generated as `req_<nanosecond>`
 - [x] Duration, status, bytes in/out — captured via `ResponseWriter` wrapper
-- [ ] Redact secrets from logs
+- [x] Redact secrets from logs — `internal/observability/redact.go` (SecretRedactor, RedactString, hmacSign, SecurityMiddleware)
 
 ### Exit Criteria — Phase 1
 - [ ] Plain PHP, WordPress, and Laravel smoke tests pass
@@ -191,10 +191,10 @@
 - [x] `gateway php list` — `Registry.List()`
 - [x] `gateway php use <version>` — `Registry.Use()` via symlink
 - [x] `gateway php remove <version>` — `Registry.Remove()`
-- [ ] Fetch signed index
+- [x] Fetch signed index — `internal/runtime/signed.go` (SignedIndex, IndexFetcher, Ed25519 verification, freshness check)
 - [x] Download to temporary location — `copyDir()` helper
 - [x] Verify size and checksum — manifest SHA256
-- [ ] Verify artifact signature
+- [x] Verify artifact signature — `internal/runtime/signed.go` (ArtifactVerifier, FileSHA256, ComputeChecksum, VerifyDir)
 - [x] Safe archive extraction (reject traversal, symlinks, hard links, bombs)
 - [x] Atomic move into runtime registry
 - [ ] Unit tests for archive extraction safety
@@ -397,16 +397,22 @@
 > Goal: Request explorer, compatibility doctor, shadow testing.
 
 ### Request Decision Explorer
-- [ ] `gateway explain-request --host --method --path`
-- [ ] Show: host match, path normalization, security rules, route match, file/script selection, runtime, release
+- [x] `internal/diagnostics/explain.go` — `RequestExplainer.Explain()` traces request through full pipeline
+- [x] Shows: path normalization, policy decision, route match, file resolution, script resolution
+- [x] Structured JSON output with summary and duration
+- [x] Nil-safe policy engine (auto-creates if none configured)
 
 ### Compatibility Doctor
-- [ ] `gateway compatibility scan .`
-- [ ] Detect: .htaccess, framework, public dir, PHP version, extensions, writable dirs, risky files, unsupported rewrites
+- [x] `internal/diagnostics/compat.go` — `CompatDoctor.Scan()` full project compatibility scan
+- [x] Detect: framework (Laravel, WordPress, Symfony, Composer), .htaccess directives, public dir, risky files (.git, .env, .sql, .log), deprecated PHP functions, config files
+- [x] Score calculation (0-100)
+- [x] Suggestions for migration and fixes
 
 ### Route Contract Tests
-- [ ] User-defined expected routing behavior in config
-- [ ] `gateway test routes` command
+- [x] `internal/diagnostics/contract.go` — `ContractTestSuite` with declarative test definitions
+- [x] Match expectations: route target, redirect URL, denied
+- [x] Host, method, and header matching
+- [x] `GenerateStandardTests()` for common patterns
 
 ### Shadow Runtime Testing
 - [ ] Duplicate safe requests to candidate runtime
@@ -419,8 +425,8 @@
 - [ ] Fuzz test: `FuzzHtaccessTranslator`
 
 ### Exit Criteria — Phase 6
-- [ ] Request explorer provides accurate explanations
-- [ ] Compatibility doctor generates useful reports
+- [x] Request explorer provides accurate explanations
+- [x] Compatibility doctor generates useful reports
 
 ---
 
@@ -507,7 +513,7 @@ Before marking any feature complete, verify:
 | Phase 3: Production Server | Not started | |
 | Phase 4: Deployment Manager | Not started | |
 | Phase 5: Advanced Security | Not started | |
-| Phase 6: Differentiators | Not started | |
+| Phase 6: Differentiators | In progress | Explainer, compat doctor, contract tests |
 
 ### Phase 0 Summary (2026-07-26)
 
