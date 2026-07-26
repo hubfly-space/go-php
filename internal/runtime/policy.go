@@ -13,7 +13,7 @@ const (
 	PolicyExact  VersionPolicy = "exact"  // must match exactly
 	PolicyPatch  VersionPolicy = "patch"  // match major.minor.patch
 	PolicyMinor  VersionPolicy = "minor"  // match major.minor
-	PolicyLocked  VersionPolicy = "locked" // use lock file
+	PolicyLocked VersionPolicy = "locked" // use lock file
 )
 
 // SelectVersion picks the best runtime from a list using the policy.

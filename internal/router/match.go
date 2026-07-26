@@ -9,14 +9,14 @@ import (
 
 // Route represents a single routing rule.
 type Route struct {
-	Host      string // exact host match (empty = any)
-	Path      string // exact path match
+	Host       string // exact host match (empty = any)
+	Path       string // exact path match
 	PathPrefix string // prefix match
-	Regex     string // regex match (compiled at init)
-	Target    string // rewrite target
-	Status    int    // redirect status (301, 302, etc.) — 0 = proxy
-	Methods   []string
-	Headers   map[string]string
+	Regex      string // regex match (compiled at init)
+	Target     string // rewrite target
+	Status     int    // redirect status (301, 302, etc.) — 0 = proxy
+	Methods    []string
+	Headers    map[string]string
 }
 
 // Engine matches requests against routes.

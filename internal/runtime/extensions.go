@@ -97,7 +97,7 @@ func BuiltInProfiles() []ExtensionProfile {
 		{
 			Name:        "web-standard",
 			Description: "Standard web application extensions",
-			Extensions:  []string{
+			Extensions: []string{
 				"core", "standard", "date", "pdo", "pdo_mysql", "pdo_sqlite",
 				"mysqli", "mbstring", "curl", "gd", "json", "xml", "xmlwriter",
 				"tokenizer", "bcmath", "fileinfo", "intl", "zip", "exif",

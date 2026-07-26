@@ -9,15 +9,15 @@ import (
 
 // Manifest describes a PHP runtime artifact.
 type Manifest struct {
-	Version    string            `json:"version"`
-	Platform   string            `json:"platform"`
-	Arch       string            `json:"arch"`
-	Flavor     string            `json:"flavor"`
-	SHA256     string            `json:"sha256"`
-	Size       int64             `json:"size"`
-	Extensions []ExtensionEntry  `json:"extensions"`
-	URL        string            `json:"url"`
-	Signature  string            `json:"signature,omitempty"`
+	Version    string           `json:"version"`
+	Platform   string           `json:"platform"`
+	Arch       string           `json:"arch"`
+	Flavor     string           `json:"flavor"`
+	SHA256     string           `json:"sha256"`
+	Size       int64            `json:"size"`
+	Extensions []ExtensionEntry `json:"extensions"`
+	URL        string           `json:"url"`
+	Signature  string           `json:"signature,omitempty"`
 }
 
 // ExtensionEntry describes an extension in the manifest.
