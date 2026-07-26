@@ -40,14 +40,14 @@ func (re *RequestExplainer) ensurePolicy() *policy.Engine {
 
 // Explanation holds the full trace of a request through the gateway.
 type Explanation struct {
-	Request      RequestInfo      `json:"request"`
-	PathNorm     PathNormStep     `json:"path_normalization"`
-	PolicyCheck  PolicyStep       `json:"policy_check"`
-	RouteMatch   RouteStep        `json:"route_match"`
-	FileCheck    FileStep         `json:"file_check"`
-	ScriptCheck  ScriptStep       `json:"script_check"`
-	Summary      string           `json:"summary"`
-	Duration     string           `json:"duration"`
+	Request     RequestInfo  `json:"request"`
+	PathNorm    PathNormStep `json:"path_normalization"`
+	PolicyCheck PolicyStep   `json:"policy_check"`
+	RouteMatch  RouteStep    `json:"route_match"`
+	FileCheck   FileStep     `json:"file_check"`
+	ScriptCheck ScriptStep   `json:"script_check"`
+	Summary     string       `json:"summary"`
+	Duration    string       `json:"duration"`
 }
 
 // RequestInfo holds the original request details.
@@ -63,16 +63,16 @@ type RequestInfo struct {
 
 // PathNormStep shows path normalization results.
 type PathNormStep struct {
-	Raw       string `json:"raw"`
-	Decoded   string `json:"decoded"`
+	Raw        string `json:"raw"`
+	Decoded    string `json:"decoded"`
 	Normalized string `json:"normalized"`
-	Valid     bool   `json:"valid"`
-	Error     string `json:"error,omitempty"`
+	Valid      bool   `json:"valid"`
+	Error      string `json:"error,omitempty"`
 }
 
 // PolicyStep shows policy engine results.
 type PolicyStep struct {
-	Decision string `json:"decision"`
+	Decision string   `json:"decision"`
 	Rules    []string `json:"matched_rules"`
 }
 
@@ -86,11 +86,11 @@ type RouteStep struct {
 
 // FileStep shows filesystem resolution results.
 type FileStep struct {
-	Found    bool   `json:"found"`
-	RealPath string `json:"real_path,omitempty"`
-	IsPHP    bool   `json:"is_php"`
-	Protected bool  `json:"protected"`
-	Error    string `json:"error,omitempty"`
+	Found     bool   `json:"found"`
+	RealPath  string `json:"real_path,omitempty"`
+	IsPHP     bool   `json:"is_php"`
+	Protected bool   `json:"protected"`
+	Error     string `json:"error,omitempty"`
 }
 
 // ScriptStep shows PHP script resolution results.
@@ -127,9 +127,9 @@ func (re *RequestExplainer) Explain(r *http.Request) *Explanation {
 	pp, err := filesystem.ParsePath(r.URL.Path)
 	if err != nil {
 		explain.PathNorm = PathNormStep{
-			Raw:    r.URL.Path,
-			Valid:  false,
-			Error:  err.Error(),
+			Raw:   r.URL.Path,
+			Valid: false,
+			Error: err.Error(),
 		}
 		explain.Summary = fmt.Sprintf("REJECTED: path normalization failed: %v", err)
 		explain.Duration = time.Since(start).String()

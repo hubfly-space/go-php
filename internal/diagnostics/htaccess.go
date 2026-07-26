@@ -18,11 +18,11 @@ func NewHtaccessTranslator() *HtaccessTranslator {
 
 // TranslatedRoute is a route converted from .htaccess.
 type TranslatedRoute struct {
-	PathPrefix string `json:"path_prefix,omitempty"`
-	Path       string `json:"path,omitempty"`
-	Regex      string `json:"regex,omitempty"`
-	Status     int    `json:"status,omitempty"`
-	Target     string `json:"target,omitempty"`
+	PathPrefix string   `json:"path_prefix,omitempty"`
+	Path       string   `json:"path,omitempty"`
+	Regex      string   `json:"regex,omitempty"`
+	Status     int      `json:"status,omitempty"`
+	Target     string   `json:"target,omitempty"`
 	Methods    []string `json:"methods,omitempty"`
 }
 

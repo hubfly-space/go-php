@@ -12,28 +12,28 @@ import (
 
 // ShadowTester compares requests between the active and candidate runtimes.
 type ShadowTester struct {
-	activeURL   string // base URL of the active runtime
+	activeURL    string // base URL of the active runtime
 	candidateURL string // base URL of the candidate runtime
-	client      *http.Client
-	mu          sync.RWMutex
-	results     []ShadowResult
-	maxResults  int
+	client       *http.Client
+	mu           sync.RWMutex
+	results      []ShadowResult
+	maxResults   int
 }
 
 // ShadowResult holds the comparison result for a single shadow request.
 type ShadowResult struct {
-	RequestURL     string        `json:"request_url"`
-	Method         string        `json:"method"`
-	ActiveStatus   int           `json:"active_status"`
-	CandidateStatus int          `json:"candidate_status"`
-	ActiveHash     string        `json:"active_hash"`
-	CandidateHash  string        `json:"candidate_hash"`
-	ActiveTime     time.Duration `json:"active_time"`
-	CandidateTime  time.Duration `json:"candidate_time"`
-	StatusMatch    bool          `json:"status_match"`
-	BodyMatch      bool          `json:"body_match"`
-	Timestamp      time.Time     `json:"timestamp"`
-	Error          string        `json:"error,omitempty"`
+	RequestURL      string        `json:"request_url"`
+	Method          string        `json:"method"`
+	ActiveStatus    int           `json:"active_status"`
+	CandidateStatus int           `json:"candidate_status"`
+	ActiveHash      string        `json:"active_hash"`
+	CandidateHash   string        `json:"candidate_hash"`
+	ActiveTime      time.Duration `json:"active_time"`
+	CandidateTime   time.Duration `json:"candidate_time"`
+	StatusMatch     bool          `json:"status_match"`
+	BodyMatch       bool          `json:"body_match"`
+	Timestamp       time.Time     `json:"timestamp"`
+	Error           string        `json:"error,omitempty"`
 }
 
 // NewShadowTester creates a shadow testing client.
@@ -174,13 +174,13 @@ func (st *ShadowTester) Summary() ShadowSummary {
 
 // ShadowSummary holds aggregate shadow test statistics.
 type ShadowSummary struct {
-	Total           int           `json:"total"`
-	Errors          int           `json:"errors"`
-	StatusMatch     int           `json:"status_match"`
-	StatusMismatch  int           `json:"status_mismatch"`
-	BodyMatch       int           `json:"body_match"`
-	BodyMismatch    int           `json:"body_mismatch"`
-	AvgActiveTime   time.Duration `json:"avg_active_time"`
+	Total            int           `json:"total"`
+	Errors           int           `json:"errors"`
+	StatusMatch      int           `json:"status_match"`
+	StatusMismatch   int           `json:"status_mismatch"`
+	BodyMatch        int           `json:"body_match"`
+	BodyMismatch     int           `json:"body_mismatch"`
+	AvgActiveTime    time.Duration `json:"avg_active_time"`
 	AvgCandidateTime time.Duration `json:"avg_candidate_time"`
 }
 

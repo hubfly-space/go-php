@@ -11,12 +11,12 @@ import (
 
 // ContractTest defines a single route contract test.
 type ContractTest struct {
-	Name        string            `json:"name"`
-	Method      string            `json:"method"`
-	Path        string            `json:"path"`
-	Host        string            `json:"host,omitempty"`
-	Headers     map[string]string `json:"headers,omitempty"`
-	Expect      Expectation       `json:"expect"`
+	Name    string            `json:"name"`
+	Method  string            `json:"method"`
+	Path    string            `json:"path"`
+	Host    string            `json:"host,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
+	Expect  Expectation       `json:"expect"`
 }
 
 // Expectation defines what a contract test expects.
@@ -38,8 +38,8 @@ type ContractTestResult struct {
 
 // ContractTestSuite is a collection of contract tests.
 type ContractTestSuite struct {
-	Engine  *router.Engine
-	Tests   []ContractTest
+	Engine *router.Engine
+	Tests  []ContractTest
 }
 
 // NewContractTestSuite creates a test suite.
