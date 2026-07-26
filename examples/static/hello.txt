@@ -1,0 +1,2 @@
+Hello, World!
+This is a static text file served by go-php-gateway.
