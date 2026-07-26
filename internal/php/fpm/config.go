@@ -98,28 +98,28 @@ func (cl *ConfigLayering) WriteINI(dir string) (string, error) {
 type DirectiveClassification string
 
 const (
-	ClassSafe      DirectiveClassification = "safe"
-	ClassWarning   DirectiveClassification = "warning"
+	ClassSafe       DirectiveClassification = "safe"
+	ClassWarning    DirectiveClassification = "warning"
 	ClassRestricted DirectiveClassification = "restricted"
-	ClassOwned     DirectiveClassification = "owned" // gateway controls this
+	ClassOwned      DirectiveClassification = "owned" // gateway controls this
 )
 
 // ClassifyDirective returns the classification of a PHP directive.
 func ClassifyDirective(name string) DirectiveClassification {
 	restricted := map[string]bool{
-		"disable_functions": true,
-		"disable_classes":   true,
-		"open_basedir":     true,
-		"safe_mode":        true,
+		"disable_functions":  true,
+		"disable_classes":    true,
+		"open_basedir":       true,
+		"safe_mode":          true,
 		"safe_mode_exec_dir": true,
 	}
 
 	owned := map[string]bool{
-		"error_log":      true,
-		"log_errors":     true,
-		"display_errors": true,
+		"error_log":       true,
+		"log_errors":      true,
+		"display_errors":  true,
 		"error_reporting": true,
-		"date.timezone":  true,
+		"date.timezone":   true,
 	}
 
 	if restricted[name] {
@@ -131,13 +131,13 @@ func ClassifyDirective(name string) DirectiveClassification {
 
 	// Warning-level: performance/critical settings.
 	warning := map[string]bool{
-		"memory_limit":         true,
-		"max_execution_time":   true,
-		"max_input_time":       true,
-		"post_max_size":        true,
-		"upload_max_filesize":  true,
-		"max_file_uploads":     true,
-		"opcache.enable":       true,
+		"memory_limit":               true,
+		"max_execution_time":         true,
+		"max_input_time":             true,
+		"post_max_size":              true,
+		"upload_max_filesize":        true,
+		"max_file_uploads":           true,
+		"opcache.enable":             true,
 		"opcache.memory_consumption": true,
 	}
 
@@ -166,38 +166,38 @@ func sectionForDirective(name string) string {
 // DefaultDevDirectives returns standard development directives.
 func DefaultDevDirectives() map[string]string {
 	return map[string]string{
-		"error_reporting":      "E_ALL",
-		"display_errors":       "On",
+		"error_reporting":        "E_ALL",
+		"display_errors":         "On",
 		"display_startup_errors": "On",
-		"log_errors":           "On",
-		"error_log":            "/dev/stderr",
-		"memory_limit":         "256M",
-		"max_execution_time":   "0",
-		"date.timezone":        "UTC",
-		"opcache.enable":       "0",
-		"opcache.enable_cli":   "0",
+		"log_errors":             "On",
+		"error_log":              "/dev/stderr",
+		"memory_limit":           "256M",
+		"max_execution_time":     "0",
+		"date.timezone":          "UTC",
+		"opcache.enable":         "0",
+		"opcache.enable_cli":     "0",
 	}
 }
 
 // DefaultProdDirectives returns standard production directives.
 func DefaultProdDirectives() map[string]string {
 	return map[string]string{
-		"error_reporting":      "E_ALL & ~E_DEPRECATED & ~E_STRICT",
-		"display_errors":       "Off",
-		"display_startup_errors": "Off",
-		"log_errors":           "On",
-		"error_log":            "/var/log/php-errors.log",
-		"memory_limit":         "128M",
-		"max_execution_time":   "30",
-		"date.timezone":        "UTC",
-		"opcache.enable":       "1",
-		"opcache.enable_cli":   "0",
-		"opcache.memory_consumption": "128",
+		"error_reporting":                 "E_ALL & ~E_DEPRECATED & ~E_STRICT",
+		"display_errors":                  "Off",
+		"display_startup_errors":          "Off",
+		"log_errors":                      "On",
+		"error_log":                       "/var/log/php-errors.log",
+		"memory_limit":                    "128M",
+		"max_execution_time":              "30",
+		"date.timezone":                   "UTC",
+		"opcache.enable":                  "1",
+		"opcache.enable_cli":              "0",
+		"opcache.memory_consumption":      "128",
 		"opcache.interned_strings_buffer": "16",
-		"opcache.max_accelerated_files": "10000",
-		"opcache.validate_timestamps": "0",
-		"session.cookie_httponly": "1",
-		"session.cookie_secure": "1",
-		"session.use_strict_mode": "1",
+		"opcache.max_accelerated_files":   "10000",
+		"opcache.validate_timestamps":     "0",
+		"session.cookie_httponly":         "1",
+		"session.cookie_secure":           "1",
+		"session.use_strict_mode":         "1",
 	}
 }

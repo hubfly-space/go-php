@@ -45,11 +45,11 @@ func TestBuildParams(t *testing.T) {
 				"Content-Type": "application/json",
 			},
 			wantVals: map[string]string{
-				"REQUEST_METHOD":  "POST",
-				"REQUEST_URI":     "/api/submit",
-				"CONTENT_TYPE":    "application/json",
-				"CONTENT_LENGTH":  "0",
-				"SERVER_PORT":     "8080",
+				"REQUEST_METHOD": "POST",
+				"REQUEST_URI":    "/api/submit",
+				"CONTENT_TYPE":   "application/json",
+				"CONTENT_LENGTH": "0",
+				"SERVER_PORT":    "8080",
 			},
 		},
 		{
@@ -58,8 +58,8 @@ func TestBuildParams(t *testing.T) {
 			path:   "/index.php/some/path",
 			host:   "example.com",
 			wantVals: map[string]string{
-				"SCRIPT_NAME":   "/index.php",
-				"PATH_INFO":     "/some/path",
+				"SCRIPT_NAME":     "/index.php",
+				"PATH_INFO":       "/some/path",
 				"PATH_TRANSLATED": "/app/public/some/path",
 			},
 		},

@@ -18,14 +18,14 @@ import (
 
 // FastCGI protocol constants.
 const (
-	protoVersion   uint8  = 1
-	typeBeginReq   uint8  = 1
-	typeAbortReq   uint8  = 2
-	typeEndRequest uint8  = 3
-	typeParams     uint8  = 4
-	typeStdin      uint8  = 5
-	typeStdout     uint8  = 6
-	typeStderr     uint8  = 7
+	protoVersion   uint8 = 1
+	typeBeginReq   uint8 = 1
+	typeAbortReq   uint8 = 2
+	typeEndRequest uint8 = 3
+	typeParams     uint8 = 4
+	typeStdin      uint8 = 5
+	typeStdout     uint8 = 6
+	typeStderr     uint8 = 7
 
 	roleResponder uint16 = 1
 
@@ -71,10 +71,10 @@ type EndRequestData struct {
 
 // Client is a FastCGI client that sends one request per connection.
 type Client struct {
-	conn    net.Conn
-	reader  *bufio.Reader
-	nextID  uint16
-	mu      sync.Mutex
+	conn   net.Conn
+	reader *bufio.Reader
+	nextID uint16
+	mu     sync.Mutex
 }
 
 // NewClient creates a FastCGI client connected to addr.

@@ -87,9 +87,9 @@ func TestEncodeDecodeNameValue(t *testing.T) {
 		{"QUERY_STRING", "foo=bar&baz=qux"},
 		{"CONTENT_TYPE", "application/x-www-form-urlencoded"},
 		{"HTTP_HOST", "example.com"},
-		{"", ""},               // empty name and value
-		{"key", ""},            // empty value
-		{"", "value"},          // empty name
+		{"", ""},                             // empty name and value
+		{"key", ""},                          // empty value
+		{"", "value"},                        // empty name
 		{"long", string(make([]byte, 1000))}, // long value
 	}
 
