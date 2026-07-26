@@ -29,19 +29,19 @@ func NewSwitcher(releaseMgr *ReleaseManager, hookRunner *HookRunner, logger *slo
 
 // DeployResult holds the result of a deploy operation.
 type DeployResult struct {
-	Release   *Release
-	Success   bool
-	Error     string
-	Duration  time.Duration
-	Steps     []DeployStep
+	Release  *Release
+	Success  bool
+	Error    string
+	Duration time.Duration
+	Steps    []DeployStep
 }
 
 // DeployStep records a single step in the deploy.
 type DeployStep struct {
-	Name      string
-	Status    string
-	Error     string
-	Duration  time.Duration
+	Name     string
+	Status   string
+	Error    string
+	Duration time.Duration
 }
 
 // Deploy performs a full zero-downtime deploy cycle.
@@ -164,9 +164,9 @@ func (p *Prober) Probe(ctx context.Context, rel *Release) (bool, error) {
 
 // SwitcherStatus holds the current deploy state.
 type SwitcherStatus struct {
-	Active    *Release
-	Recent    []*DeployResult
-	mu        sync.RWMutex
+	Active *Release
+	Recent []*DeployResult
+	mu     sync.RWMutex
 }
 
 // NewSwitcherStatus creates a status tracker.

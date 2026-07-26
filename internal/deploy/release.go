@@ -14,25 +14,25 @@ import (
 type ReleaseState string
 
 const (
-	StateCreated   ReleaseState = "created"
-	StateActive    ReleaseState = "active"
-	StateDraining  ReleaseState = "draining"
-	StateStopped   ReleaseState = "stopped"
-	StateFailed    ReleaseState = "failed"
+	StateCreated  ReleaseState = "created"
+	StateActive   ReleaseState = "active"
+	StateDraining ReleaseState = "draining"
+	StateStopped  ReleaseState = "stopped"
+	StateFailed   ReleaseState = "failed"
 )
 
 // Release represents an immutable deployment.
 type Release struct {
-	ID          string            `json:"id"`
-	Version     string            `json:"version"`
-	RuntimeID   string            `json:"runtime_id"`
-	State       ReleaseState      `json:"state"`
-	CreatedAt   time.Time         `json:"created_at"`
-	ActivatedAt *time.Time        `json:"activated_at,omitempty"`
-	DeactivatedAt *time.Time      `json:"deactivated_at,omitempty"`
-	Dir         string            `json:"dir"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
-	Error       string            `json:"error,omitempty"`
+	ID            string            `json:"id"`
+	Version       string            `json:"version"`
+	RuntimeID     string            `json:"runtime_id"`
+	State         ReleaseState      `json:"state"`
+	CreatedAt     time.Time         `json:"created_at"`
+	ActivatedAt   *time.Time        `json:"activated_at,omitempty"`
+	DeactivatedAt *time.Time        `json:"deactivated_at,omitempty"`
+	Dir           string            `json:"dir"`
+	Metadata      map[string]string `json:"metadata,omitempty"`
+	Error         string            `json:"error,omitempty"`
 }
 
 // ReleaseManager manages immutable releases for a project.

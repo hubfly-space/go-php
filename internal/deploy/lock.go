@@ -10,15 +10,15 @@ import (
 
 // LockFile records the exact runtime state for reproducible deploys.
 type LockFile struct {
-	Schema        string            `json:"schema"`
-	PHPVersion    string            `json:"php_version"`
-	RuntimeID     string            `json:"runtime_id"`
-	ManifestHash  string            `json:"manifest_hash"`
-	Extensions    []LockExtension   `json:"extensions"`
-	Profile       string            `json:"profile,omitempty"`
-	GeneratedAt   time.Time         `json:"generated_at"`
-	GatewayVersion string           `json:"gateway_version"`
-	Checksum      string            `json:"checksum"`
+	Schema         string          `json:"schema"`
+	PHPVersion     string          `json:"php_version"`
+	RuntimeID      string          `json:"runtime_id"`
+	ManifestHash   string          `json:"manifest_hash"`
+	Extensions     []LockExtension `json:"extensions"`
+	Profile        string          `json:"profile,omitempty"`
+	GeneratedAt    time.Time       `json:"generated_at"`
+	GatewayVersion string          `json:"gateway_version"`
+	Checksum       string          `json:"checksum"`
 }
 
 // LockExtension records a locked extension.

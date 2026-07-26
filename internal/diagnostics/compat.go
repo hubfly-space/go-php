@@ -9,23 +9,23 @@ import (
 
 // CompatibilityReport holds the results of a compatibility scan.
 type CompatibilityReport struct {
-	Root        string            `json:"root"`
-	ScannedAt   string            `json:"scanned_at"`
-	Framework   string            `json:"framework,omitempty"`
-	PHPVersion  string            `json:"php_version,omitempty"`
-	Issues      []CompatIssue     `json:"issues"`
-	Warnings    []CompatIssue     `json:"warnings"`
-	Info        []string          `json:"info"`
-	Score       int               `json:"score"` // 0-100
+	Root       string        `json:"root"`
+	ScannedAt  string        `json:"scanned_at"`
+	Framework  string        `json:"framework,omitempty"`
+	PHPVersion string        `json:"php_version,omitempty"`
+	Issues     []CompatIssue `json:"issues"`
+	Warnings   []CompatIssue `json:"warnings"`
+	Info       []string      `json:"info"`
+	Score      int           `json:"score"` // 0-100
 }
 
 // CompatIssue is a single compatibility finding.
 type CompatIssue struct {
-	Category    string `json:"category"`
-	Severity    string `json:"severity"` // error, warning, info
-	File        string `json:"file,omitempty"`
-	Message     string `json:"message"`
-	Suggestion  string `json:"suggestion,omitempty"`
+	Category   string `json:"category"`
+	Severity   string `json:"severity"` // error, warning, info
+	File       string `json:"file,omitempty"`
+	Message    string `json:"message"`
+	Suggestion string `json:"suggestion,omitempty"`
 }
 
 // CompatDoctor scans a project for compatibility issues.
@@ -61,8 +61,8 @@ func (d *CompatDoctor) Scan() *CompatibilityReport {
 
 func (d *CompatDoctor) detectFramework(r *CompatibilityReport) {
 	checks := []struct {
-		file  string
-		name  string
+		file string
+		name string
 	}{
 		{"artisan", "Laravel"},
 		{"public/index.php", "Laravel"},
@@ -123,9 +123,9 @@ func (d *CompatDoctor) checkPublicDir(r *CompatibilityReport) {
 	info, err := os.Stat(publicDir)
 	if err != nil {
 		r.Warnings = append(r.Warnings, CompatIssue{
-			Category: "structure",
-			Severity: "warning",
-			Message:  "No public/ directory found",
+			Category:   "structure",
+			Severity:   "warning",
+			Message:    "No public/ directory found",
 			Suggestion: "Create a public/ directory for web-accessible files",
 		})
 		return
@@ -147,9 +147,9 @@ func (d *CompatDoctor) checkPublicDir(r *CompatibilityReport) {
 		r.Info = append(r.Info, "public/index.php found")
 	} else {
 		r.Warnings = append(r.Warnings, CompatIssue{
-			Category: "structure",
-			Severity: "warning",
-			Message:  "No index.php in public/",
+			Category:   "structure",
+			Severity:   "warning",
+			Message:    "No index.php in public/",
 			Suggestion: "Add public/index.php as the front controller",
 		})
 	}
@@ -242,8 +242,8 @@ func (d *CompatDoctor) checkWritableDirs(r *CompatibilityReport) {
 
 func (d *CompatDoctor) checkRiskyFiles(r *CompatibilityReport) {
 	risky := []struct {
-		pattern  string
-		message  string
+		pattern string
+		message string
 	}{
 		{".git", "Git directory found in web root"},
 		{".svn", "SVN directory found in web root"},
@@ -257,9 +257,9 @@ func (d *CompatDoctor) checkRiskyFiles(r *CompatibilityReport) {
 		matches, _ := filepath.Glob(filepath.Join(d.root, "**", rk.pattern))
 		if len(matches) > 0 {
 			r.Warnings = append(r.Warnings, CompatIssue{
-				Category: "security",
-				Severity: "warning",
-				Message:  rk.message,
+				Category:   "security",
+				Severity:   "warning",
+				Message:    rk.message,
 				Suggestion: "Ensure these files are not publicly accessible",
 			})
 		}
