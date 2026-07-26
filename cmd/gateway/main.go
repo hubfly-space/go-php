@@ -15,17 +15,21 @@ import (
 	"time"
 
 	"github.com/go-php/gateway/internal/buildinfo"
+	"github.com/go-php/gateway/internal/config"
 	"github.com/go-php/gateway/internal/errors"
 	"github.com/go-php/gateway/internal/filesystem"
+	"github.com/go-php/gateway/internal/observability"
 	"github.com/go-php/gateway/internal/php/cgi"
 	"github.com/go-php/gateway/internal/php/fastcgi"
+	"github.com/go-php/gateway/internal/router"
 	"github.com/go-php/gateway/internal/supervisor"
 )
 
 func main() {
 	serveCmd := flag.NewFlagSet("serve", flag.ExitOnError)
 	phpFPM := serveCmd.String("php-fpm", "", "path to php-fpm binary")
-	addr := serveCmd.String("addr", ":8080", "listen address")
+	addr := serveCmd.String("addr", "", "listen address (overrides config)")
+	configPath := serveCmd.String("config", "", "path to gateway.yaml config file")
 
 	if len(os.Args) < 2 {
 		fmt.Fprintf(os.Stderr, "Usage: gateway <command> [flags]\n")
@@ -36,7 +40,7 @@ func main() {
 	switch os.Args[1] {
 	case "serve":
 		serveCmd.Parse(os.Args[2:])
-		if err := runServe(*addr, *phpFPM, serveCmd.Args()); err != nil {
+		if err := runServe(*addr, *phpFPM, *configPath, serveCmd.Args()); err != nil {
 			slog.Error("serve failed", "error", err)
 			os.Exit(1)
 		}
@@ -50,7 +54,25 @@ func main() {
 	}
 }
 
-func runServe(addr, phpFPMPath string, args []string) error {
+func runServe(flagAddr, phpFPMPath, configPath string, args []string) error {
+	// Load config.
+	cfg := config.DefaultConfig()
+	if configPath != "" {
+		var err error
+		cfg, err = config.Load(configPath)
+		if err != nil {
+			return fmt.Errorf("load config: %w", err)
+		}
+	}
+
+	// Flags override config.
+	if flagAddr != "" {
+		cfg.Server.Addr = flagAddr
+	}
+	if phpFPMPath != "" {
+		cfg.PHP.Binary = phpFPMPath
+	}
+
 	docRoot := "."
 	if len(args) > 0 {
 		docRoot = args[0]
@@ -64,10 +86,10 @@ func runServe(addr, phpFPMPath string, args []string) error {
 	slog.Info("starting gateway",
 		"version", buildinfo.Get().Version,
 		"root", absRoot,
-		"addr", addr,
+		"addr", cfg.Server.Addr,
 	)
 
-	// Detect framework and document root.
+	// Detect framework.
 	framework, pubRoot := detectFramework(absRoot)
 	if pubRoot != "" {
 		absRoot = pubRoot
@@ -77,25 +99,54 @@ func runServe(addr, phpFPMPath string, args []string) error {
 	}
 
 	// Create filesystem resolver.
-	resolver := filesystem.NewResolver(absRoot, filesystem.SymlinkWithinRoot, filesystem.DefaultProtectedPatterns())
+	symlinkMode := filesystem.SymlinkWithinRoot
+	if cfg.Security.SymlinkMode == "deny" {
+		symlinkMode = filesystem.SymlinkDeny
+	}
+	protected := cfg.Security.ProtectedPatterns
+	if len(protected) == 0 {
+		protected = filesystem.DefaultProtectedPatterns()
+	}
+	resolver := filesystem.NewResolver(absRoot, symlinkMode, protected)
 
-	// Start PHP-FPM if binary provided.
+	// Build routes from config.
+	var routes []router.Route
+	for _, rc := range cfg.Routes {
+		routes = append(routes, router.Route{
+			Host:       rc.Host,
+			Path:       rc.Path,
+			PathPrefix: rc.PathPrefix,
+			Regex:      rc.Regex,
+			Target:     rc.Target,
+			Status:     rc.Status,
+			Methods:    rc.Methods,
+			Headers:    rc.Headers,
+		})
+	}
+	routingEngine, err := router.NewEngine(routes)
+	if err != nil {
+		return fmt.Errorf("build routes: %w", err)
+	}
+
+	// Start PHP-FPM.
 	var fpm *supervisor.Supervisor
-	var sockPath string
-	if phpFPMPath != "" {
-		sockPath = filepath.Join(os.TempDir(), fmt.Sprintf("gateway-%d.sock", os.Getpid()))
+	sockPath := cfg.PHP.SocketPath
+	if cfg.PHP.Binary != "" {
+		if sockPath == "" {
+			sockPath = filepath.Join(os.TempDir(), fmt.Sprintf("gateway-%d.sock", os.Getpid()))
+		}
 		pidPath := filepath.Join(os.TempDir(), fmt.Sprintf("gateway-%d.pid", os.Getpid()))
 
 		fpm = supervisor.New(supervisor.Config{
-			PHPBinary:      phpFPMPath,
+			PHPBinary:      cfg.PHP.Binary,
 			SocketPath:     sockPath,
 			PIDFile:        pidPath,
-			MaxChildren:    20,
-			StartServers:   2,
-			MinSpare:       2,
-			MaxSpare:       6,
-			MaxRequests:    500,
-			RequestTimeout: 60 * time.Second,
+			MaxChildren:    cfg.PHP.MaxChildren,
+			StartServers:   cfg.PHP.StartServers,
+			MinSpare:       cfg.PHP.MinSpare,
+			MaxSpare:       cfg.PHP.MaxSpare,
+			MaxRequests:    cfg.PHP.MaxRequests,
+			RequestTimeout: cfg.PHP.RequestTimeout,
 			ErrorLog:       filepath.Join(os.TempDir(), "gateway-fpm-error.log"),
 		})
 
@@ -109,22 +160,29 @@ func runServe(addr, phpFPMPath string, args []string) error {
 		}
 	}
 
+	logger := slog.Default()
+
 	handler := &gatewayHandler{
-		docRoot:   absRoot,
-		resolver:  resolver,
-		fpm:       fpm,
-		sockPath:  sockPath,
-		logger:    slog.Default(),
+		docRoot:       absRoot,
+		resolver:      resolver,
+		fpm:           fpm,
+		sockPath:      sockPath,
+		routingEngine: routingEngine,
+		logger:        logger,
+		cfg:           cfg,
 	}
 
+	var h http.Handler = handler
+	h = observability.Middleware(logger)(h)
+
 	server := &http.Server{
-		Addr:              addr,
-		Handler:           handler,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      60 * time.Second,
-		IdleTimeout:       120 * time.Second,
-		MaxHeaderBytes:    1 << 20, // 1MB
+		Addr:              cfg.Server.Addr,
+		Handler:           h,
+		ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		WriteTimeout:      cfg.Server.WriteTimeout,
+		IdleTimeout:       cfg.Server.IdleTimeout,
+		MaxHeaderBytes:    cfg.Server.MaxHeaderBytes,
 	}
 
 	quit := make(chan os.Signal, 1)
@@ -138,7 +196,7 @@ func runServe(addr, phpFPMPath string, args []string) error {
 		server.Shutdown(ctx)
 	}()
 
-	slog.Info("listening", "addr", addr)
+	slog.Info("listening", "addr", cfg.Server.Addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("listen: %w", err)
 	}
@@ -148,30 +206,42 @@ func runServe(addr, phpFPMPath string, args []string) error {
 }
 
 type gatewayHandler struct {
-	docRoot  string
-	resolver *filesystem.Resolver
-	fpm      *supervisor.Supervisor
-	sockPath string
-	logger   *slog.Logger
+	docRoot       string
+	resolver      *filesystem.Resolver
+	fpm           *supervisor.Supervisor
+	sockPath      string
+	routingEngine *router.Engine
+	logger        *slog.Logger
+	cfg           *config.Config
 }
 
 func (h *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	reqID := fmt.Sprintf("req_%d", start.UnixNano())
+	w.Header().Set("X-Request-ID", reqID)
 
 	path := r.URL.Path
 
-	// Normalize path.
 	pp, err := filesystem.ParsePath(path)
 	if err != nil {
 		h.logger.Warn("path rejected", "request_id", reqID, "path", path, "error", err)
 		h.devError(w, r, 400, "Bad Request", fmt.Sprintf("Path rejected: %v", err), reqID, start)
 		return
 	}
-
 	normalized := pp.NormalizedPath
 
-	// Check if this is a static file.
+	// Check routing rules.
+	if route := h.routingEngine.Match(r); route != nil {
+		if route.IsRedirect() {
+			target := route.Rewrite(normalized)
+			http.Redirect(w, r, target, route.Status)
+			return
+		}
+		// Rewrite the request path.
+		normalized = route.Rewrite(normalized)
+	}
+
+	// Check for static file.
 	rf, err := h.resolver.Resolve(normalized)
 	if err == nil {
 		defer rf.Close()
@@ -179,19 +249,20 @@ func (h *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If file not found and we have PHP-FPM, try PHP.
+	// Try PHP.
 	if h.fpm != nil && h.fpm.State() == supervisor.StateReady {
 		h.servePHP(w, r, normalized, reqID, start)
 		return
 	}
 
 	// Try directory index.
-	if normalized == "/" {
-		normalized = "/index.html"
+	indexPath := normalized
+	if indexPath == "/" {
+		indexPath = "/index.html"
 	} else {
-		normalized = normalized + "/index.html"
+		indexPath = indexPath + "/index.html"
 	}
-	rf2, err := h.resolver.Resolve(normalized)
+	rf2, err := h.resolver.Resolve(indexPath)
 	if err == nil {
 		defer rf2.Close()
 		h.serveStatic(w, r, rf2, reqID, start)
@@ -199,12 +270,9 @@ func (h *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.devError(w, r, 404, "Not Found", "The requested resource was not found.", reqID, start)
-	h.logger.Info("not found", "request_id", reqID, "path", r.URL.Path,
-		"duration_ms", time.Since(start).Milliseconds())
 }
 
 func (h *gatewayHandler) serveStatic(w http.ResponseWriter, r *http.Request, rf *filesystem.ResolvedFile, reqID string, start time.Time) {
-	// Check for protected file access at resolver level.
 	if h.resolver.IsProtected(r.URL.Path) {
 		h.devError(w, r, 403, "Access Denied", "This file is protected.", reqID, start)
 		return
@@ -214,23 +282,17 @@ func (h *gatewayHandler) serveStatic(w http.ResponseWriter, r *http.Request, rf 
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("X-Request-ID", reqID)
 
-	// ETag
 	etag := generateETag(rf.Info)
 	w.Header().Set("ETag", etag)
 
-	// If-Match check.
 	if match := r.Header.Get("If-Match"); match != "" && match != etag {
 		w.WriteHeader(http.StatusPreconditionFailed)
 		return
 	}
-
-	// If-None-Match check.
 	if match := r.Header.Get("If-None-Match"); match == etag {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-
-	// If-Modified-Since check.
 	if ims := r.Header.Get("If-Modified-Since"); ims != "" {
 		if t, err := time.Parse(time.RFC1123, ims); err == nil {
 			if !rf.Info.ModTime().After(t) {
@@ -241,7 +303,6 @@ func (h *gatewayHandler) serveStatic(w http.ResponseWriter, r *http.Request, rf 
 	}
 
 	w.Header().Set("Last-Modified", rf.Info.ModTime().UTC().Format(time.RFC1123))
-
 	http.ServeContent(w, r, rf.Info.Name(), rf.Info.ModTime(), rf.F)
 	h.logger.Info("static", "request_id", reqID, "path", r.URL.Path,
 		"file", rf.RealPath, "duration_ms", time.Since(start).Milliseconds())
@@ -250,14 +311,12 @@ func (h *gatewayHandler) serveStatic(w http.ResponseWriter, r *http.Request, rf 
 func (h *gatewayHandler) servePHP(w http.ResponseWriter, r *http.Request, normalized, reqID string, start time.Time) {
 	w.Header().Set("X-Request-ID", reqID)
 
-	// Resolve script — try common entry points.
 	scriptName, scriptPath := resolveScript(h.docRoot, normalized)
 	if scriptPath == "" {
 		h.devError(w, r, 404, "Not Found", "No PHP entry point found.", reqID, start)
 		return
 	}
 
-	// Verify script is under doc root.
 	resolved, err := h.resolver.ResolveInfo(scriptName)
 	if err != nil {
 		h.devError(w, r, 404, "Not Found", "Script not found.", reqID, start)
@@ -268,10 +327,8 @@ func (h *gatewayHandler) servePHP(w http.ResponseWriter, r *http.Request, normal
 		return
 	}
 
-	// Build CGI params.
 	params := cgi.BuildParams(r, scriptPath, scriptName, h.docRoot)
 
-	// Connect to FPM.
 	client, err := fastcgi.NewClient(h.sockPath, 5*time.Second)
 	if err != nil {
 		h.logger.Error("fastcgi connect failed", "request_id", reqID, "error", err)
@@ -283,7 +340,7 @@ func (h *gatewayHandler) servePHP(w http.ResponseWriter, r *http.Request, normal
 	var stdin io.Reader
 	if r.Body != nil {
 		defer r.Body.Close()
-		stdin = io.LimitReader(r.Body, 20<<20) // 20MB
+		stdin = io.LimitReader(r.Body, 20<<20)
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
@@ -321,14 +378,12 @@ func (h *gatewayHandler) servePHP(w http.ResponseWriter, r *http.Request, normal
 			return
 		}
 
-		// Check for PHP application errors.
 		if res.endReq != nil && res.endReq.ProtocolStatus != fastcgi.ProtocolRequestComplete {
 			h.logger.Error("php protocol error", "request_id", reqID,
 				"app_status", res.endReq.AppStatus,
 				"proto_status", res.endReq.ProtocolStatus)
 		}
 
-		// Write headers.
 		for k, vv := range resp.Headers {
 			for _, v := range vv {
 				w.Header().Add(k, v)
@@ -342,7 +397,6 @@ func (h *gatewayHandler) servePHP(w http.ResponseWriter, r *http.Request, normal
 	}
 }
 
-// devError writes a detailed development error page.
 func (h *gatewayHandler) devError(w http.ResponseWriter, r *http.Request, status int, title, detail, reqID string, start time.Time) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
@@ -370,28 +424,22 @@ h1{color:#ff6b6b}h2{color:#ffd93d}pre{background:#16213e;padding:20px;border-rad
 	)
 }
 
-// resolveScript determines the PHP script to execute.
 func resolveScript(docRoot, normalized string) (scriptName, scriptPath string) {
-	// If the path points to a .php file directly.
 	if strings.HasSuffix(normalized, ".php") {
-		sp := filepath.Join(docRoot, normalized[1:]) // strip leading /
+		sp := filepath.Join(docRoot, normalized[1:])
 		if _, err := os.Stat(sp); err == nil {
 			return normalized, sp
 		}
 	}
-
-	// Try public/index.php (framework pattern).
 	for _, entry := range []string{"public/index.php", "index.php"} {
 		sp := filepath.Join(docRoot, entry)
 		if _, err := os.Stat(sp); err == nil {
 			return "/" + entry, sp
 		}
 	}
-
 	return "", ""
 }
 
-// detectFramework identifies the framework and returns the correct document root.
 func detectFramework(root string) (framework, docRoot string) {
 	checks := []struct {
 		file   string
