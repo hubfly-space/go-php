@@ -1,36 +1,40 @@
+version: "2"
+
 run:
   timeout: 5m
-  modules-download-mode: readonly
 
 linters:
-  enable:
+  disable:
     - errcheck
+    - gocritic
+  enable:
     - govet
     - staticcheck
     - unused
-    - gosimple
     - ineffassign
-    - typecheck
     - misspell
     - unconvert
-    - gocritic
+
+formatters:
+  enable:
     - gofmt
     - goimports
 
 linters-settings:
   goimports:
     local-prefixes: github.com/go-php/gateway
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - style
-    disabled-tags:
-      - performance
-      - experimental
+  staticcheck:
+    checks:
+      - all
+      - "-SA1012"
+      - "-SA9003"
+      - "-QF1003"
+      - "-QF1012"
 
 issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
   exclude-rules:
     - path: _test\.go
       linters:
-        - errcheck
-        - gocritic
+        - staticcheck

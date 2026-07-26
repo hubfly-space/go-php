@@ -249,7 +249,7 @@ func TestDeploySwitcherRollback(t *testing.T) {
 	r1, _ := switcher.Deploy(context.Background(), "1.0.0", "runtime", src, nil)
 	r2, _ := switcher.Deploy(context.Background(), "1.1.0", "runtime", src, nil)
 
-	result, err := switcher.Rollback(nil)
+	result, err := switcher.Rollback(context.TODO())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -54,8 +54,7 @@ func TestLockFileTamperDetection(t *testing.T) {
 	SaveLockFile(path, lf)
 
 	// Tamper: change php_version to a different value.
-	data, _ := os.ReadFile(path)
-	data = []byte(`{"schema":"gateway-lock/v1","php_version":"9.9.9","runtime_id":"x","manifest_hash":"x","extensions":null,"generated_at":"2025-01-01T00:00:00Z","gateway_version":"0.1.0","checksum":"` + `deadbeef"}`)
+	data := []byte(`{"schema":"gateway-lock/v1","php_version":"9.9.9","runtime_id":"x","manifest_hash":"x","extensions":null,"generated_at":"2025-01-01T00:00:00Z","gateway_version":"0.1.0","checksum":"` + `deadbeef"}`)
 	os.WriteFile(path, data, 0644)
 
 	loaded, err := LoadLockFile(path)

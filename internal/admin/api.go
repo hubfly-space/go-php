@@ -162,7 +162,6 @@ type StatusProvider struct {
 	ErrorsTotal    int64
 	ActiveRequests int64
 	AvgResponseMs  float64
-	mu             sync.RWMutex
 }
 
 // NewStatusProvider creates a status provider.
@@ -232,10 +231,9 @@ func (a *AuditLog) Recent(n int) []AuditEntry {
 
 // RateLimiter implements token bucket rate limiting per key.
 type RateLimiter struct {
-	mu       sync.Mutex
-	buckets  map[string]*bucket
-	rate     int // tokens per minute
-	lastSync time.Time
+	mu      sync.Mutex
+	buckets map[string]*bucket
+	rate    int // tokens per minute
 }
 
 type bucket struct {
