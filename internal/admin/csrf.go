@@ -12,19 +12,19 @@ import (
 
 // CSRFProtect provides CSRF protection for browser-based admin API access.
 type CSRFProtect struct {
-	mu       sync.RWMutex
-	tokens   map[string]time.Time // token -> creation time
-	secret   []byte
-	ttl      time.Duration
+	mu        sync.RWMutex
+	tokens    map[string]time.Time // token -> creation time
+	secret    []byte
+	ttl       time.Duration
 	maxTokens int
 }
 
 // NewCSRFProtect creates a CSRF protection manager.
 func NewCSRFProtect(secret string, ttl time.Duration) *CSRFProtect {
 	return &CSRFProtect{
-		tokens:   make(map[string]time.Time),
-		secret:   []byte(secret),
-		ttl:      ttl,
+		tokens:    make(map[string]time.Time),
+		secret:    []byte(secret),
+		ttl:       ttl,
 		maxTokens: 100,
 	}
 }

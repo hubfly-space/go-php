@@ -32,12 +32,12 @@ func DefaultAdminConfig() *Config {
 
 // Server is the admin API server.
 type Server struct {
-	cfg      Config
-	logger   *slog.Logger
-	status   *StatusProvider
-	audit    *AuditLog
-	limiter  *RateLimiter
-	mux      *http.ServeMux
+	cfg     Config
+	logger  *slog.Logger
+	status  *StatusProvider
+	audit   *AuditLog
+	limiter *RateLimiter
+	mux     *http.ServeMux
 }
 
 // NewServer creates an admin API server.
@@ -99,10 +99,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	status := map[string]interface{}{
-		"status":    "ok",
-		"uptime":    time.Since(s.status.StartTime).String(),
-		"version":   s.status.Version,
-		"pid":       s.status.PID,
+		"status":     "ok",
+		"uptime":     time.Since(s.status.StartTime).String(),
+		"version":    s.status.Version,
+		"pid":        s.status.PID,
 		"goroutines": s.status.Goroutines(),
 	}
 
@@ -129,10 +129,10 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	metrics := map[string]interface{}{
-		"requests_total":   s.status.RequestsTotal,
-		"errors_total":     s.status.ErrorsTotal,
-		"active_requests":  s.status.ActiveRequests,
-		"avg_response_ms":  s.status.AvgResponseMs,
+		"requests_total":  s.status.RequestsTotal,
+		"errors_total":    s.status.ErrorsTotal,
+		"active_requests": s.status.ActiveRequests,
+		"avg_response_ms": s.status.AvgResponseMs,
 	}
 
 	json.NewEncoder(w).Encode(metrics)
