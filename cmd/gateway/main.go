@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,8 +15,10 @@ import (
 	"time"
 
 	"github.com/go-php/gateway/internal/buildinfo"
+	"github.com/go-php/gateway/internal/errors"
 	"github.com/go-php/gateway/internal/filesystem"
 	"github.com/go-php/gateway/internal/php/cgi"
+	"github.com/go-php/gateway/internal/php/fastcgi"
 	"github.com/go-php/gateway/internal/supervisor"
 )
 
@@ -28,7 +29,7 @@ func main() {
 
 	if len(os.Args) < 2 {
 		fmt.Fprintf(os.Stderr, "Usage: gateway <command> [flags]\n")
-		fmt.Fprintf(os.Stderr, "Commands: serve\n")
+		fmt.Fprintf(os.Stderr, "Commands: serve, version\n")
 		os.Exit(2)
 	}
 
@@ -66,13 +67,23 @@ func runServe(addr, phpFPMPath string, args []string) error {
 		"addr", addr,
 	)
 
+	// Detect framework and document root.
+	framework, pubRoot := detectFramework(absRoot)
+	if pubRoot != "" {
+		absRoot = pubRoot
+	}
+	if framework != "" {
+		slog.Info("framework detected", "framework", framework, "document_root", absRoot)
+	}
+
 	// Create filesystem resolver.
 	resolver := filesystem.NewResolver(absRoot, filesystem.SymlinkWithinRoot, filesystem.DefaultProtectedPatterns())
 
 	// Start PHP-FPM if binary provided.
 	var fpm *supervisor.Supervisor
+	var sockPath string
 	if phpFPMPath != "" {
-		sockPath := filepath.Join(os.TempDir(), fmt.Sprintf("gateway-%d.sock", os.Getpid()))
+		sockPath = filepath.Join(os.TempDir(), fmt.Sprintf("gateway-%d.sock", os.Getpid()))
 		pidPath := filepath.Join(os.TempDir(), fmt.Sprintf("gateway-%d.pid", os.Getpid()))
 
 		fpm = supervisor.New(supervisor.Config{
@@ -102,7 +113,7 @@ func runServe(addr, phpFPMPath string, args []string) error {
 		docRoot:   absRoot,
 		resolver:  resolver,
 		fpm:       fpm,
-		sockPath:  filepath.Join(os.TempDir(), fmt.Sprintf("gateway-%d.sock", os.Getpid())),
+		sockPath:  sockPath,
 		logger:    slog.Default(),
 	}
 
@@ -116,7 +127,6 @@ func runServe(addr, phpFPMPath string, args []string) error {
 		MaxHeaderBytes:    1 << 20, // 1MB
 	}
 
-	// Graceful shutdown on SIGINT/SIGTERM.
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
@@ -155,7 +165,7 @@ func (h *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	pp, err := filesystem.ParsePath(path)
 	if err != nil {
 		h.logger.Warn("path rejected", "request_id", reqID, "path", path, "error", err)
-		http.Error(w, "400 Bad Request", http.StatusBadRequest)
+		h.devError(w, r, 400, "Bad Request", fmt.Sprintf("Path rejected: %v", err), reqID, start)
 		return
 	}
 
@@ -188,41 +198,84 @@ func (h *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.NotFound(w, r)
+	h.devError(w, r, 404, "Not Found", "The requested resource was not found.", reqID, start)
 	h.logger.Info("not found", "request_id", reqID, "path", r.URL.Path,
 		"duration_ms", time.Since(start).Milliseconds())
 }
 
 func (h *gatewayHandler) serveStatic(w http.ResponseWriter, r *http.Request, rf *filesystem.ResolvedFile, reqID string, start time.Time) {
-	w.Header().Set("Content-Type", detectMIME(rf.RealPath))
+	// Check for protected file access at resolver level.
+	if h.resolver.IsProtected(r.URL.Path) {
+		h.devError(w, r, 403, "Access Denied", "This file is protected.", reqID, start)
+		return
+	}
+
+	ct := detectMIME(rf.RealPath)
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("X-Request-ID", reqID)
+
+	// ETag
+	etag := generateETag(rf.Info)
+	w.Header().Set("ETag", etag)
+
+	// If-Match check.
+	if match := r.Header.Get("If-Match"); match != "" && match != etag {
+		w.WriteHeader(http.StatusPreconditionFailed)
+		return
+	}
+
+	// If-None-Match check.
+	if match := r.Header.Get("If-None-Match"); match == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
+	// If-Modified-Since check.
+	if ims := r.Header.Get("If-Modified-Since"); ims != "" {
+		if t, err := time.Parse(time.RFC1123, ims); err == nil {
+			if !rf.Info.ModTime().After(t) {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+		}
+	}
+
+	w.Header().Set("Last-Modified", rf.Info.ModTime().UTC().Format(time.RFC1123))
+
 	http.ServeContent(w, r, rf.Info.Name(), rf.Info.ModTime(), rf.F)
 	h.logger.Info("static", "request_id", reqID, "path", r.URL.Path,
 		"file", rf.RealPath, "duration_ms", time.Since(start).Milliseconds())
 }
 
 func (h *gatewayHandler) servePHP(w http.ResponseWriter, r *http.Request, normalized, reqID string, start time.Time) {
-	// Resolve script.
-	scriptName := "/index.php"
-	scriptPath := filepath.Join(h.docRoot, "public", "index.php")
+	w.Header().Set("X-Request-ID", reqID)
 
-	// Check if the script exists.
-	if _, err := os.Stat(scriptPath); err != nil {
-		// Try docRoot/index.php.
-		scriptPath = filepath.Join(h.docRoot, "index.php")
-		if _, err := os.Stat(scriptPath); err != nil {
-			http.NotFound(w, r)
-			return
-		}
+	// Resolve script — try common entry points.
+	scriptName, scriptPath := resolveScript(h.docRoot, normalized)
+	if scriptPath == "" {
+		h.devError(w, r, 404, "Not Found", "No PHP entry point found.", reqID, start)
+		return
+	}
+
+	// Verify script is under doc root.
+	resolved, err := h.resolver.ResolveInfo(scriptName)
+	if err != nil {
+		h.devError(w, r, 404, "Not Found", "Script not found.", reqID, start)
+		return
+	}
+	if resolved == nil || !resolved.Mode().IsRegular() {
+		h.devError(w, r, 404, "Not Found", "Script is not a regular file.", reqID, start)
+		return
 	}
 
 	// Build CGI params.
-	params := cgi.BuildParams(r, scriptPath, scriptName, filepath.Join(h.docRoot, "public"))
+	params := cgi.BuildParams(r, scriptPath, scriptName, h.docRoot)
 
-	// Connect to FPM and execute.
-	client, err := h.connectFPM()
+	// Connect to FPM.
+	client, err := fastcgi.NewClient(h.sockPath, 5*time.Second)
 	if err != nil {
 		h.logger.Error("fastcgi connect failed", "request_id", reqID, "error", err)
-		http.Error(w, "502 Bad Gateway", http.StatusBadGateway)
+		h.devError(w, r, 502, "Bad Gateway", "Could not connect to PHP backend.", reqID, start)
 		return
 	}
 	defer client.Close()
@@ -230,7 +283,6 @@ func (h *gatewayHandler) servePHP(w http.ResponseWriter, r *http.Request, normal
 	var stdin io.Reader
 	if r.Body != nil {
 		defer r.Body.Close()
-		// Limit body size.
 		stdin = io.LimitReader(r.Body, 20<<20) // 20MB
 	}
 
@@ -240,7 +292,7 @@ func (h *gatewayHandler) servePHP(w http.ResponseWriter, r *http.Request, normal
 	type result struct {
 		stdout []byte
 		stderr []byte
-		endReq interface{}
+		endReq *fastcgi.EndRequestData
 		err    error
 	}
 
@@ -253,20 +305,27 @@ func (h *gatewayHandler) servePHP(w http.ResponseWriter, r *http.Request, normal
 	select {
 	case <-ctx.Done():
 		h.logger.Warn("php timeout", "request_id", reqID, "duration_ms", time.Since(start).Milliseconds())
-		http.Error(w, "504 Gateway Timeout", http.StatusGatewayTimeout)
+		h.devError(w, r, 504, "Gateway Timeout", "PHP execution timed out.", reqID, start)
 		return
 	case res := <-done:
 		if res.err != nil {
 			h.logger.Error("php execution failed", "request_id", reqID, "error", res.err)
-			http.Error(w, "502 Bad Gateway", http.StatusBadGateway)
+			h.devError(w, r, 502, "Bad Gateway", fmt.Sprintf("PHP error: %v", res.err), reqID, start)
 			return
 		}
 
 		resp, err := cgi.ParseResponse(res.stdout, res.stderr)
 		if err != nil {
 			h.logger.Error("php response parse failed", "request_id", reqID, "error", err)
-			http.Error(w, "502 Bad Gateway", http.StatusBadGateway)
+			h.devError(w, r, 502, "Bad Gateway", "Invalid PHP response.", reqID, start)
 			return
+		}
+
+		// Check for PHP application errors.
+		if res.endReq != nil && res.endReq.ProtocolStatus != fastcgi.ProtocolRequestComplete {
+			h.logger.Error("php protocol error", "request_id", reqID,
+				"app_status", res.endReq.AppStatus,
+				"proto_status", res.endReq.ProtocolStatus)
 		}
 
 		// Write headers.
@@ -283,29 +342,82 @@ func (h *gatewayHandler) servePHP(w http.ResponseWriter, r *http.Request, normal
 	}
 }
 
-func (h *gatewayHandler) connectFPM() (*fastcgiClient, error) {
-	// Try to connect to the FPM socket.
-	conn, err := net.DialTimeout("unix", h.sockPath, 5*time.Second)
-	if err != nil {
-		return nil, fmt.Errorf("dial FPM: %w", err)
+// devError writes a detailed development error page.
+func (h *gatewayHandler) devError(w http.ResponseWriter, r *http.Request, status int, title, detail, reqID string, start time.Time) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+
+	fmt.Fprintf(w, `<!DOCTYPE html>
+<html><head><title>%d %s</title>
+<style>body{font-family:monospace;margin:40px;background:#1a1a2e;color:#e0e0e0}
+h1{color:#ff6b6b}h2{color:#ffd93d}pre{background:#16213e;padding:20px;border-radius:8px;overflow-x:auto}
+.label{color:#a0a0a0}.val{color:#4ecdc4}</style></head>
+<body>
+<h1>%d %s</h1>
+<p>%s</p>
+<table>
+<tr><td class="label">Request ID</td><td class="val">%s</td></tr>
+<tr><td class="label">Path</td><td class="val">%s</td></tr>
+<tr><td class="label">Method</td><td class="val">%s</td></tr>
+<tr><td class="label">Duration</td><td class="val">%dms</td></tr>
+</table>
+<pre>gateway %s</pre>
+</body></html>`,
+		status, title, status, title, detail,
+		reqID, r.URL.Path, r.Method,
+		time.Since(start).Milliseconds(),
+		buildinfo.Get().Version,
+	)
+}
+
+// resolveScript determines the PHP script to execute.
+func resolveScript(docRoot, normalized string) (scriptName, scriptPath string) {
+	// If the path points to a .php file directly.
+	if strings.HasSuffix(normalized, ".php") {
+		sp := filepath.Join(docRoot, normalized[1:]) // strip leading /
+		if _, err := os.Stat(sp); err == nil {
+			return normalized, sp
+		}
 	}
-	return &fastcgiClient{conn: conn}, nil
+
+	// Try public/index.php (framework pattern).
+	for _, entry := range []string{"public/index.php", "index.php"} {
+		sp := filepath.Join(docRoot, entry)
+		if _, err := os.Stat(sp); err == nil {
+			return "/" + entry, sp
+		}
+	}
+
+	return "", ""
 }
 
-// fastcgiClient is a minimal wrapper for the FPM connection.
-// It uses the protocol from internal/php/fastcgi but inline for Phase 0 simplicity.
-type fastcgiClient struct {
-	conn net.Conn
+// detectFramework identifies the framework and returns the correct document root.
+func detectFramework(root string) (framework, docRoot string) {
+	checks := []struct {
+		file   string
+		name   string
+		pubDir string
+	}{
+		{"artisan", "Laravel", "public"},
+		{"public/index.php", "Laravel", "public"},
+		{"bin/console", "Symfony", "public"},
+		{"wp-config.php", "WordPress", "."},
+		{"composer.json", "PHP/Composer", "."},
+	}
+	for _, c := range checks {
+		if _, err := os.Stat(filepath.Join(root, c.file)); err == nil {
+			pub := filepath.Join(root, c.pubDir)
+			if info, err := os.Stat(pub); err == nil && info.IsDir() {
+				return c.name, pub
+			}
+			return c.name, ""
+		}
+	}
+	return "", ""
 }
 
-func (c *fastcgiClient) Close() error {
-	return c.conn.Close()
-}
-
-func (c *fastcgiClient) Execute(params map[string]string, stdin io.Reader) ([]byte, []byte, interface{}, error) {
-	// For Phase 0, use a direct protocol implementation.
-	// This will be replaced with the full fastcgi.Client later.
-	return nil, nil, nil, fmt.Errorf("fastcgi: not yet wired (Phase 0 stub)")
+func generateETag(info os.FileInfo) string {
+	return fmt.Sprintf(`"w/%d-%d"`, info.Size(), info.ModTime().UnixNano())
 }
 
 func detectMIME(path string) string {
@@ -345,3 +457,6 @@ func detectMIME(path string) string {
 		return "application/octet-stream"
 	}
 }
+
+// Ensure errors package is used.
+var _ = errors.IsCode
