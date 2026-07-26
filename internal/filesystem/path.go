@@ -122,7 +122,8 @@ func percentDecode(s string) (string, error) {
 
 	i := 0
 	for i < len(s) {
-		if s[i] == '%' {
+		switch s[i] {
+		case '%':
 			if i+2 >= len(s) {
 				return "", ErrInvalidPercentEncoding
 			}
@@ -133,10 +134,10 @@ func percentDecode(s string) (string, error) {
 			}
 			b.WriteByte(byte(h1<<4 | h2))
 			i += 3
-		} else if s[i] == '+' {
+		case '+':
 			b.WriteByte(' ')
 			i++
-		} else {
+		default:
 			b.WriteByte(s[i])
 			i++
 		}
@@ -164,7 +165,7 @@ func splitAndCollapse(path string) []string {
 	}
 
 	segments := strings.Split(path, "/")
-	var result []stack
+	var result []string
 
 	for _, seg := range segments {
 		switch seg {
@@ -175,18 +176,14 @@ func splitAndCollapse(path string) []string {
 				result = result[:len(result)-1]
 			}
 		default:
-			result = append(result, stack(seg))
+			result = append(result, seg)
 		}
 	}
 
 	out := make([]string, len(result))
-	for i, s := range result {
-		out[i] = string(s)
-	}
+	copy(out, result)
 	return out
 }
-
-type stack = string
 
 // containsPercentEncoding checks if a string contains %XX sequences
 // (indicating double-encoding after a single decode pass).

@@ -112,7 +112,8 @@ func (s *ContractTestSuite) runSingle(test ContractTest) ContractTestResult {
 	} else if test.Expect.Denied {
 		// Route should not match (or match a deny rule).
 		if route != nil && route.Status == 0 {
-			// Route matched but it's not a redirect — could be a proxy route.
+			result.Error = fmt.Sprintf("expected route to be denied for %s %s, but matched a proxy route", test.Method, test.Path)
+			return result
 		}
 	}
 

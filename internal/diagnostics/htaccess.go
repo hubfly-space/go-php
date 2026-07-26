@@ -125,7 +125,8 @@ func (t *HtaccessTranslator) parseRewriteRule(line string) (*TranslatedRoute, er
 		// Redirect.
 		status := 301
 		if flagSet["L"] || flagSet["l"] {
-			// L flag with redirect.
+			// L flag with redirect — combined last+redirect.
+			status = 301
 		}
 		route.Status = status
 		route.Target = target

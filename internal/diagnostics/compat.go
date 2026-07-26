@@ -195,7 +195,12 @@ func (d *CompatDoctor) checkPHPFiles(r *CompatibilityReport) {
 
 		// Check for short open tags.
 		if strings.Contains(content, "<?=") || strings.Contains(content, "<? ") {
-			// This is fine in PHP 5.4+, but worth noting.
+			r.Warnings = append(r.Warnings, CompatIssue{
+				Category: "php",
+				Severity: "warning",
+				File:     path,
+				Message:  "Uses PHP short open tags (<?= or <?)",
+			})
 		}
 	}
 }
