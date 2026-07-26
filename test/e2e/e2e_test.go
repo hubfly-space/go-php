@@ -38,13 +38,13 @@ import (
 // TestContext holds the entire test environment: FPM process, client, paths.
 // Tests call SetupE2E(t) to get a ready-to-use context.
 type TestContext struct {
-	T        *testing.T
-	Client   *fastcgi.Client
-	DocRoot  string
-	FPMConf  string
-	FPMProc  *exec.Cmd
-	Socket   string
-	BaseURL  string
+	T       *testing.T
+	Client  *fastcgi.Client
+	DocRoot string
+	FPMConf string
+	FPMProc *exec.Cmd
+	Socket  string
+	BaseURL string
 }
 
 // SetupE2E starts a fresh PHP-FPM, connects a FastCGI client, and returns
@@ -199,10 +199,10 @@ func (c *TestContext) Request(params map[string]string, body string) (int, map[s
 	// Fill in defaults if not specified.
 	defaults := map[string]string{
 		"GATEWAY_INTERFACE": "CGI/1.1",
-		"SERVER_PROTOCOL":  "HTTP/1.1",
-		"SERVER_NAME":      "localhost",
-		"SERVER_PORT":      "80",
-		"REMOTE_ADDR":      "127.0.0.1",
+		"SERVER_PROTOCOL":   "HTTP/1.1",
+		"SERVER_NAME":       "localhost",
+		"SERVER_PORT":       "80",
+		"REMOTE_ADDR":       "127.0.0.1",
 	}
 	for k, v := range defaults {
 		if _, ok := params[k]; !ok {
@@ -863,9 +863,9 @@ func TestContentTypeHeader(t *testing.T) {
 	ctx := SetupE2E(t)
 
 	tests := []struct {
-		name        string
-		phpCode     string
-		wantCT      string
+		name    string
+		phpCode string
+		wantCT  string
 	}{
 		{
 			name:    "json",
@@ -1047,8 +1047,8 @@ func TestStaticFileMIMETypes(t *testing.T) {
 	ctx.WriteStatic("test.xml", "<root/>")
 
 	tests := []struct {
-		file    string
-		wantCT  string
+		file   string
+		wantCT string
 	}{
 		{"test.html", "text/html"},
 		{"test.css", "text/css"},

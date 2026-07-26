@@ -13,11 +13,11 @@ import (
 
 // CertManager manages TLS certificates and SNI routing.
 type CertManager struct {
-	mu       sync.RWMutex
-	certs    map[string]*tls.Certificate // hostname -> cert
+	mu          sync.RWMutex
+	certs       map[string]*tls.Certificate // hostname -> cert
 	defaultCert *tls.Certificate
-	domains  []string
-	baseDir  string
+	domains     []string
+	baseDir     string
 }
 
 // NewCertManager creates a new TLS certificate manager.

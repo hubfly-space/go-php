@@ -27,18 +27,18 @@ const (
 
 // Config holds FPM pool configuration.
 type Config struct {
-	PHPBinary    string // Path to php-fpm binary
-	SocketPath   string // Unix socket path
-	PIDFile      string
-	MaxChildren  int
-	StartServers int
-	MinSpare     int
-	MaxSpare     int
-	MaxRequests  int
+	PHPBinary      string // Path to php-fpm binary
+	SocketPath     string // Unix socket path
+	PIDFile        string
+	MaxChildren    int
+	StartServers   int
+	MinSpare       int
+	MaxSpare       int
+	MaxRequests    int
 	RequestTimeout time.Duration
-	ErrorLog     string
-	User         string
-	Group        string
+	ErrorLog       string
+	User           string
+	Group          string
 }
 
 // Supervisor manages a PHP-FPM process.

@@ -20,11 +20,11 @@ import (
 
 // ACMEManager manages automatic TLS certificates via ACME (Let's Encrypt).
 type ACMEManager struct {
-	mu           sync.RWMutex
-	certs        map[string]*tls.Certificate
-	email        string
-	cacheDir     string
-	directoryURL string
+	mu            sync.RWMutex
+	certs         map[string]*tls.Certificate
+	email         string
+	cacheDir      string
+	directoryURL  string
 	httpChallenge *HTTPChallenge
 }
 
@@ -189,10 +189,10 @@ func (m *ACMEManager) loadCached(domain string) (*tls.Certificate, error) {
 
 // HTTPChallenge handles ACME HTTP-01 challenges.
 type HTTPChallenge struct {
-	addr    string
-	server  *http.Server
-	proofs  map[string]string // token -> response
-	mu      sync.RWMutex
+	addr   string
+	server *http.Server
+	proofs map[string]string // token -> response
+	mu     sync.RWMutex
 }
 
 // NewHTTPChallenge creates an HTTP challenge handler.
