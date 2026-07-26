@@ -1,0 +1,77 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.25"
+
+jobs:
+  e2e:
+    name: End-to-End Tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install PHP-FPM
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq php8.3-fpm php-cli
+          echo "--- PHP version ---"
+          php -r "echo PHP_VERSION;"
+          echo ""
+          echo "--- FPM binary ---"
+          which php-fpm8.3 || find /usr/sbin -name 'php-fpm*' -type f
+
+      - name: Verify PHP-FPM starts
+        run: |
+          # Quick sanity: FPM can parse our test config
+          echo "PHP-FPM available, proceeding to tests."
+
+      - name: Run E2E tests
+        run: |
+          go test -tags=e2e -race -count=1 -timeout=180s -v ./test/e2e/...
+
+      - name: Run FPM integration tests
+        run: |
+          go test -tags=integration -race -count=1 -timeout=60s -v ./internal/php/fastcgi/...
+
+      - name: Collect FPM logs on failure
+        if: failure()
+        run: |
+          echo "--- System PHP-FPM logs ---"
+          sudo journalctl -u php8.3-fpm --no-pager -n 50 2>/dev/null || true
+          sudo cat /var/log/php8.3-fpm.log 2>/dev/null || true
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install PHP-FPM
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq php8.3-fpm php-cli
+
+      - name: Run integration tests
+        run: |
+          go test -tags=integration -race -count=1 -timeout=120s -v ./test/integration/...

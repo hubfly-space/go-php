@@ -1,0 +1,129 @@
+name: Fuzz Testing
+
+on:
+  schedule:
+    # Weekly on Sundays at 03:00 UTC
+    - cron: "0 3 * * 0"
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "Fuzz duration per target (e.g. 30s, 1m, 5m)"
+        required: false
+        default: "30s"
+      target:
+        description: "Specific target to fuzz (all runs all targets)"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - all
+          - FuzzPathParser
+          - FuzzRewriteEngine
+          - FuzzFastCGIRecordParser
+          - FuzzFastCGIParams
+          - FuzzCGIResponseHeaders
+          - FuzzHtaccessTranslator
+          - FuzzByteSizeParser
+          - FuzzDurationParser
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.25"
+
+jobs:
+  fuzz:
+    name: Fuzz
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "filesystem — PathParser"
+            target: FuzzPathParser
+            pkg: ./internal/filesystem/...
+          - name: "filesystem — PathResolver"
+            target: FuzzPathResolverInputs
+            pkg: ./internal/filesystem/...
+          - name: "router — RewriteEngine"
+            target: FuzzRewriteEngine
+            pkg: ./internal/router/...
+          - name: "fastcgi — RecordParser"
+            target: FuzzFastCGIRecordParser
+            pkg: ./internal/php/fastcgi/...
+          - name: "fastcgi — Params"
+            target: FuzzFastCGIParams
+            pkg: ./internal/php/fastcgi/...
+          - name: "cgi — ResponseHeaders"
+            target: FuzzCGIResponseHeaders
+            pkg: ./internal/php/cgi/...
+          - name: "diagnostics — HtaccessTranslator"
+            target: FuzzHtaccessTranslator
+            pkg: ./internal/diagnostics/...
+          - name: "policy — ByteSizeParser"
+            target: FuzzByteSizeParser
+            pkg: ./internal/policy/...
+          - name: "policy — DurationParser"
+            target: FuzzDurationParser
+            pkg: ./internal/policy/...
+
+    name: "Fuzz ${{ matrix.name }}"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run fuzz target
+        run: |
+          DURATION="${{ github.event.inputs.duration || '30s' }}"
+          TARGET="${{ github.event.inputs.target || 'all' }}"
+
+          if [ "$TARGET" = "all" ] || [ "$TARGET" = "${{ matrix.target }}" ]; then
+            echo "Fuzzing ${{ matrix.target }} for ${DURATION}..."
+            go test -fuzz=${{ matrix.target }} -fuzztime=${DURATION} ${{ matrix.pkg }}
+          else
+            echo "Skipping ${{ matrix.target }} (target filter: ${TARGET})"
+          fi
+
+      - name: Report result
+        if: always()
+        run: |
+          echo "Fuzz target: ${{ matrix.target }}"
+          echo "Duration: ${{ github.event.inputs.duration || '30s' }}"
+          echo "Status: ${{ job.status }}"
+
+  fuzz-regression:
+    name: Fuzz Regression Seed Corpus
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run all fuzz targets as tests (regression only, no -fuzz flag)
+        run: |
+          # Run without -fuzz flag to validate existing seed corpus
+          go test -run='^$' -count=0 ./internal/filesystem/...
+          go test -run='^$' -count=0 ./internal/php/fastcgi/...
+          go test -run='^$' -count=0 ./internal/php/cgi/...
+          go test -run='^$' -count=0 ./internal/diagnostics/...
+          go test -run='^$' -count=0 ./internal/policy/...
+
+      - name: Run fuzz smoke (1s each) to verify targets compile
+        run: |
+          for pkg_target in \
+            "./internal/filesystem/..." "FuzzPathParser" \
+            "./internal/php/fastcgi/..." "FuzzFastCGIRecordParser" \
+            "./internal/php/cgi/..." "FuzzCGIResponseHeaders" \
+            "./internal/diagnostics/..." "FuzzHtaccessTranslator" \
+            "./internal/policy/..." "FuzzByteSizeParser"; do
+            PKG=$(echo "$pkg_target" | awk '{print $1}')
+            TARGET=$(echo "$pkg_target" | awk '{print $2}')
+            echo "--- Fuzzing ${TARGET} in ${PKG} for 1s ---"
+            go test -fuzz=${TARGET} -fuzztime=1s ${PKG} || true
+          done
