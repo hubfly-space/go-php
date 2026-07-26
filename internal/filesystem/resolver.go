@@ -61,7 +61,7 @@ func (r *Resolver) Resolve(normalizedPath string) (*ResolvedFile, error) {
 	}
 
 	// Check for protected patterns before resolving.
-	if r.isProtected(normalizedPath) {
+	if r.IsProtected(normalizedPath) {
 		return nil, ErrProtectedFile
 	}
 
@@ -160,7 +160,7 @@ func (r *Resolver) ResolveInfo(normalizedPath string) (fs.FileInfo, error) {
 		return nil, fmt.Errorf("filesystem: path must be absolute: %q", normalizedPath)
 	}
 
-	if r.isProtected(normalizedPath) {
+	if r.IsProtected(normalizedPath) {
 		return nil, ErrProtectedFile
 	}
 
@@ -184,8 +184,8 @@ func (r *Resolver) ResolveInfo(normalizedPath string) (fs.FileInfo, error) {
 	return info, nil
 }
 
-// isProtected checks if a normalized path matches any protected pattern.
-func (r *Resolver) isProtected(normalizedPath string) bool {
+// IsProtected checks if a normalized path matches any protected pattern.
+func (r *Resolver) IsProtected(normalizedPath string) bool {
 	for _, pat := range r.protected {
 		// Check if any path segment matches the pattern.
 		// This handles patterns like ".git" matching "/project/.git/config".
