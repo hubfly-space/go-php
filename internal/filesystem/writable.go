@@ -9,9 +9,9 @@ import (
 
 // WritablePaths manages shared writable directories for PHP applications.
 type WritablePaths struct {
-	root    string
-	paths   map[string]WDir
-	mu      sync.RWMutex
+	root  string
+	paths map[string]WDir
+	mu    sync.RWMutex
 }
 
 // WDir represents a writable directory configuration.

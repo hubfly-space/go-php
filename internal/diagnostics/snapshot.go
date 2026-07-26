@@ -166,10 +166,10 @@ func ListSnapshots(dir string) ([]*Snapshot, error) {
 func redactConfig(cfg map[string]interface{}) map[string]interface{} {
 	redacted := make(map[string]interface{})
 	sensitive := map[string]bool{
-		"token":      true,
-		"secret":     true,
-		"password":   true,
-		"api_key":    true,
+		"token":       true,
+		"secret":      true,
+		"password":    true,
+		"api_key":     true,
 		"csrf_secret": true,
 	}
 

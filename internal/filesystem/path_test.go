@@ -7,8 +7,8 @@ import (
 
 func TestParsePath_Normal(t *testing.T) {
 	tests := []struct {
-		input    string
-		segments []string
+		input      string
+		segments   []string
 		normalized string
 	}{
 		{"/", nil, "/"},
@@ -41,7 +41,7 @@ func TestParsePath_Normal(t *testing.T) {
 
 func TestParsePath_DotSegments(t *testing.T) {
 	tests := []struct {
-		input    string
+		input      string
 		normalized string
 	}{
 		{"/foo/../bar", "/bar"},

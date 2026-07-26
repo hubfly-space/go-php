@@ -14,9 +14,9 @@ import (
 type SymlinkMode int
 
 const (
-	SymlinkDeny       SymlinkMode = iota // No symlinks allowed
-	SymlinkWithinRoot                    // Symlinks allowed if final target stays under root
-	SymlinkAllowListed                   // Target must be under configured roots
+	SymlinkDeny        SymlinkMode = iota // No symlinks allowed
+	SymlinkWithinRoot                     // Symlinks allowed if final target stays under root
+	SymlinkAllowListed                    // Target must be under configured roots
 )
 
 // Resolver resolves paths safely under a document root.
@@ -37,18 +37,18 @@ func NewResolver(docRoot string, symlinks SymlinkMode, protected []string) *Reso
 }
 
 var (
-	ErrTraversal       = errors.New("path escapes document root")
-	ErrProtectedFile   = errors.New("access to protected file denied")
-	ErrNotRegularFile  = errors.New("not a regular file")
-	ErrSymlinkDenied   = errors.New("symlink resolution denied")
-	ErrSymlinkEscape   = errors.New("symlink escapes document root")
-	ErrSpecialFile     = errors.New("special file (device, socket, pipe)")
-	ErrFileNotFound    = errors.New("file not found")
+	ErrTraversal      = errors.New("path escapes document root")
+	ErrProtectedFile  = errors.New("access to protected file denied")
+	ErrNotRegularFile = errors.New("not a regular file")
+	ErrSymlinkDenied  = errors.New("symlink resolution denied")
+	ErrSymlinkEscape  = errors.New("symlink escapes document root")
+	ErrSpecialFile    = errors.New("special file (device, socket, pipe)")
+	ErrFileNotFound   = errors.New("file not found")
 )
 
 // ResolvedFile holds the result of a successful path resolution.
 type ResolvedFile struct {
-	RealPath string   // Canonical absolute path
+	RealPath string // Canonical absolute path
 	Info     fs.FileInfo
 	F        *os.File // Open file handle (caller must close)
 }
