@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { Activity, Globe, Clock, AlertTriangle, ArrowRight, Zap, CheckCircle2, Terminal } from 'lucide-react'
 import {
   AreaChart,
