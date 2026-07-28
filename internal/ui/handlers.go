@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-php/gateway/internal/buildinfo"
+	"github.com/go-php/gateway/internal/config"
 )
 
 // StatusProvider exposes gateway status for the UI.
@@ -426,6 +427,26 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleConfigValidate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodGet {
+		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	cfg := config.DefaultConfig()
+	if _, err := os.Stat("gateway.yaml"); err == nil {
+		loaded, err := config.Load("gateway.yaml")
+		if err != nil {
+			jsonErr(w, fmt.Sprintf("invalid config: %v", err), http.StatusBadRequest)
+			return
+		}
+		cfg = loaded
+	}
+
+	if err := config.Validate(cfg); err != nil {
+		jsonErr(w, fmt.Sprintf("validation failed: %v", err), http.StatusBadRequest)
+		return
+	}
+
 	jsonResp(w, map[string]string{"status": "valid"})
 }
 
@@ -441,10 +462,14 @@ func (s *Server) handleConfigSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(cfg.Sites) > 0 {
+		s.status.Sites.Store(&cfg.Sites)
+	}
+
 	s.logBuffer.Add(LogEntry{
 		Timestamp: time.Now(),
 		Level:     "info",
-		Message:   "configuration saved",
+		Message:   "configuration updated",
 	})
 
 	jsonResp(w, map[string]string{"status": "saved"})
