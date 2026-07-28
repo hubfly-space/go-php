@@ -14,7 +14,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 export const api = {
   getStatus: () => request<{ status: string; uptime: string; uptime_seconds: number; version: string; pid: number; addr: string; doc_root: string; framework: string; goroutines: number; active_requests: number; total_requests: number; total_errors: number; sites_count: number; runtimes: string[] }>('/status'),
-  getSystem: () => request<{ hostname: string; os: string; arch: string; go_version: string; goroutines: number; mem_alloc_mb: number; mem_sys_mb: number; num_cpu: number; pid: number }>('/system'),
+  getSystem: () => request<import('../types').SystemInfo>('/system'),
   getSites: () => request<{ sites: import('../types').Site[] }>('/sites'),
   createSite: (data: import('../types').SiteCreateRequest) => request<{ site: import('../types').Site }>('/sites', { method: 'POST', body: JSON.stringify(data) }),
   updateSite: (id: string, data: import('../types').Site) => request<{ site: import('../types').Site }>(`/sites/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
@@ -24,4 +24,16 @@ export const api = {
   getConfig: () => request<import('../types').GatewayConfig>('/config'),
   saveConfig: (cfg: import('../types').GatewayConfig) => request<{ status: string }>('/config/save', { method: 'POST', body: JSON.stringify(cfg) }),
   healthCheck: () => request<{ status: string }>('/health'),
+
+  // Deployments
+  getDeployments: () => request<{ releases: import('../types').Release[] }>('/deploy/list'),
+  createDeployment: (version: string, srcDir?: string) => request<{ release: import('../types').Release }>('/deploy/create', { method: 'POST', body: JSON.stringify({ version, src_dir: srcDir }) }),
+  activateDeployment: (id: string) => request<{ status: string; id: string }>('/deploy/activate', { method: 'POST', body: JSON.stringify({ id }) }),
+  rollbackDeployment: () => request<{ status: string; release: import('../types').Release }>('/deploy/rollback', { method: 'POST' }),
+
+  // Diagnostics & Explorer
+  getDoctor: () => request<import('../types').DoctorReport>('/doctor'),
+  getDoctorCompat: (path?: string) => request<import('../types').CompatReport>(`/doctor/compat${path ? `?path=${encodeURIComponent(path)}` : ''}`),
+  explainRequest: (url: string) => request<import('../types').Explanation>(`/explain?url=${encodeURIComponent(url)}`),
+  getMetricsHistory: () => request<{ history: import('../types').MetricPoint[] }>('/metrics/history'),
 }
