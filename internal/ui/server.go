@@ -15,7 +15,8 @@ var staticFiles embed.FS
 
 // ServerConfig holds UI server settings.
 type ServerConfig struct {
-	Addr string `yaml:"addr"`
+	Addr     string `yaml:"addr"`
+	SockPath string `yaml:"sock_path"`
 }
 
 // DefaultConfig returns sensible defaults.
@@ -33,6 +34,7 @@ type Server struct {
 	mux       *http.ServeMux
 	server    *http.Server
 	logBuffer *LogBuffer
+	siteMgr   *SiteManager
 }
 
 // NewServer creates a new UI server.
@@ -43,6 +45,7 @@ func NewServer(cfg ServerConfig, logger *slog.Logger, status *StatusProvider) *S
 		status:    status,
 		mux:       http.NewServeMux(),
 		logBuffer: NewLogBuffer(500),
+		siteMgr:   NewSiteManager(logger, cfg.SockPath),
 	}
 	s.routes()
 	return s
@@ -116,6 +119,9 @@ func (s *Server) Start() error {
 
 // Stop gracefully shuts down the UI server.
 func (s *Server) Stop() error {
+	if s.siteMgr != nil {
+		s.siteMgr.StopAll()
+	}
 	if s.server == nil {
 		return nil
 	}

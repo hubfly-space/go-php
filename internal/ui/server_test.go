@@ -2,13 +2,26 @@ package ui
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 )
+
+func getFreePort(t *testing.T) int {
+	t.Helper()
+	l, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("get free port: %v", err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	return port
+}
 
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
@@ -19,7 +32,9 @@ func newTestServer(t *testing.T) *Server {
 		{ID: "my-site", Name: "My Site", Domain: "example.com", Root: "/var/www/html", Status: "active", PHPVersion: "8.3"},
 	}
 	status.Sites.Store(&sites)
-	return NewServer(DefaultConfig(), logger, status)
+	srv := NewServer(DefaultConfig(), logger, status)
+	t.Cleanup(func() { srv.siteMgr.StopAll() })
+	return srv
 }
 
 func TestHandleStatus(t *testing.T) {
@@ -64,13 +79,14 @@ func TestHandleSites(t *testing.T) {
 	}
 
 	// POST new site
-	body := `{"name":"New Site","domain":"new.com","root":"/var/www/new"}`
+	freePort := getFreePort(t)
+	body := fmt.Sprintf(`{"name":"New Site","port":%d,"webroot":"/tmp/test-webroot","domain":"new.com","root":"/var/www/new"}`, freePort)
 	req = httptest.NewRequest(http.MethodPost, "/api/sites", strings.NewReader(body))
 	w = httptest.NewRecorder()
 	s.handleSites(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
+		t.Fatalf("expected 200, got %d, body: %s", w.Code, w.Body.String())
 	}
 
 	var createResp map[string]any
