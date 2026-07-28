@@ -33,27 +33,75 @@ func main() {
 	configPath := serveCmd.String("config", "", "path to gateway.yaml config file")
 	uiAddrFlag := serveCmd.String("ui-addr", "127.0.0.1:30200", "management UI address (empty to disable)")
 
+	initCmd := flag.NewFlagSet("init", flag.ExitOnError)
+	initFramework := initCmd.String("framework", "", "target framework (laravel, symfony, wordpress, plain)")
+	initPHP := initCmd.String("php", "8.3", "PHP version constraint")
+
 	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: gateway <command> [flags]\n")
-		fmt.Fprintf(os.Stderr, "Commands: serve, version\n")
+		printUsage()
 		os.Exit(2)
 	}
 
-	switch os.Args[1] {
+	cmd := os.Args[1]
+	args := os.Args[2:]
+
+	var err error
+	switch cmd {
 	case "serve":
-		serveCmd.Parse(os.Args[2:])
-		if err := runServe(*addr, *phpFPM, *configPath, serveCmd.Args(), *uiAddrFlag); err != nil {
-			slog.Error("serve failed", "error", err)
-			os.Exit(1)
-		}
+		serveCmd.Parse(args)
+		err = runServe(*addr, *phpFPM, *configPath, serveCmd.Args(), *uiAddrFlag)
+	case "init":
+		initCmd.Parse(args)
+		err = runInit(*initFramework, *initPHP, initCmd.Args())
+	case "doctor":
+		err = runDoctor()
+	case "compat":
+		err = runCompat(args)
+	case "explain":
+		err = runExplain(args)
+	case "config":
+		err = runConfig(args)
+	case "deploy":
+		err = runDeploy(args)
+	case "php":
+		err = runPHP(args)
+	case "incident":
+		err = runIncident(args)
+	case "service":
+		err = runService(args)
 	case "version":
 		info := buildinfo.Get()
 		fmt.Printf("gateway %s (commit %s, built %s, %s)\n",
 			info.Version, info.Commit, info.BuildDate, info.GoVersion)
+	case "help", "-h", "--help":
+		printUsage()
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", os.Args[1])
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", cmd)
+		printUsage()
 		os.Exit(2)
 	}
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\033[31mError: %v\033[0m\n", err)
+		os.Exit(1)
+	}
+}
+
+func printUsage() {
+	fmt.Fprintf(os.Stderr, "\033[1;36mGo-PHP Gateway\033[0m — Secure PHP runtime manager & application gateway\n\n")
+	fmt.Fprintf(os.Stderr, "Usage: gateway <command> [flags]\n\n")
+	fmt.Fprintf(os.Stderr, "Commands:\n")
+	fmt.Fprintf(os.Stderr, "  serve       Start gateway dev/production server\n")
+	fmt.Fprintf(os.Stderr, "  init        Initialize a new Go-PHP Gateway project\n")
+	fmt.Fprintf(os.Stderr, "  doctor      Run system readiness & environment checks\n")
+	fmt.Fprintf(os.Stderr, "  compat      Scan project for framework & .htaccess compatibility\n")
+	fmt.Fprintf(os.Stderr, "  explain     Trace a request through the decision pipeline\n")
+	fmt.Fprintf(os.Stderr, "  config      Manage configuration (validate, init)\n")
+	fmt.Fprintf(os.Stderr, "  deploy      Manage releases and deployments (create, activate, rollback, list)\n")
+	fmt.Fprintf(os.Stderr, "  php         Manage PHP runtimes (list, install, use, remove)\n")
+	fmt.Fprintf(os.Stderr, "  incident    Capture diagnostic incident snapshot\n")
+	fmt.Fprintf(os.Stderr, "  service     Install systemd service unit\n")
+	fmt.Fprintf(os.Stderr, "  version     Show build and version metadata\n\n")
 }
 
 func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr string) error {

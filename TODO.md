@@ -150,8 +150,8 @@
 - [x] Minimal `gateway.yaml` schema — `internal/config/config.go` with ServerConfig, PHPConfig, RouteConfig, LoggingConfig, SecurityConfig
 - [x] Parse and validate config — `Load()` with YAML, `Validate()` with semantic checks
 - [x] Generate defaults — `DefaultConfig()` with sensible defaults
-- [ ] Config init command
-- [x] Config validate command — `diagnostics/doctor.go` validates system readiness
+- [x] Config init command — gateway config init and gateway init CLI commands
+- [x] Config validate command — gateway config validate command wired to CLI
 
 ### Development Error Pages
 - [x] Detailed error pages in development mode — styled HTML with request ID, path, method, duration
