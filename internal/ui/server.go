@@ -62,8 +62,17 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/runtimes", s.handleRuntimes)
 	s.mux.HandleFunc("/api/logs", s.handleLogs)
 	s.mux.HandleFunc("/api/logs/recent", s.handleRecentLogs)
+	s.mux.HandleFunc("/api/ws/logs", s.handleWSLogs)
 	s.mux.HandleFunc("/api/health", s.handleHealth)
 	s.mux.HandleFunc("/api/system", s.handleSystem)
+	s.mux.HandleFunc("/api/doctor", s.handleDoctor)
+	s.mux.HandleFunc("/api/doctor/compat", s.handleDoctorCompat)
+	s.mux.HandleFunc("/api/explain", s.handleExplain)
+	s.mux.HandleFunc("/api/deploy/list", s.handleDeployList)
+	s.mux.HandleFunc("/api/deploy/create", s.handleDeployCreate)
+	s.mux.HandleFunc("/api/deploy/activate", s.handleDeployActivate)
+	s.mux.HandleFunc("/api/deploy/rollback", s.handleDeployRollback)
+	s.mux.HandleFunc("/api/metrics/history", s.handleMetricsHistory)
 
 	// Static files
 	staticFS, err := fs.Sub(staticFiles, "static")
