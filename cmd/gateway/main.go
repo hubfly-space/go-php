@@ -75,6 +75,21 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr str
 		cfg.PHP.Binary = phpFPMPath
 	}
 
+	// Auto-detect PHP-FPM binary if the provided path doesn't exist.
+	if cfg.PHP.Binary != "" {
+		if _, err := os.Stat(cfg.PHP.Binary); err != nil {
+			if detected := detectFPMBinary(); detected != "" {
+				slog.Info("auto-detected PHP-FPM binary", "path", detected)
+				cfg.PHP.Binary = detected
+			}
+		}
+	} else {
+		if detected := detectFPMBinary(); detected != "" {
+			slog.Info("auto-detected PHP-FPM binary", "path", detected)
+			cfg.PHP.Binary = detected
+		}
+	}
+
 	docRoot := "."
 	if len(args) > 0 {
 		docRoot = args[0]
@@ -167,6 +182,7 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr str
 	if uiAddr != "" {
 		uiCfg.Addr = uiAddr
 	}
+	uiCfg.SockPath = sockPath
 	statusProvider := ui.NewStatusProvider(buildinfo.Get().Version, cfg.Server.Addr, absRoot, framework)
 	statusProvider.Runtimes = detectRuntimes(cfg.PHP.Binary)
 
@@ -471,6 +487,26 @@ func detectRuntimes(binary string) []string {
 		runtimes = append(runtimes, "unknown")
 	}
 	return runtimes
+}
+
+// detectFPMBinary finds the PHP-FPM binary on the system.
+func detectFPMBinary() string {
+	candidates := []string{
+		"/usr/sbin/php-fpm8.3",
+		"/usr/sbin/php-fpm8.2",
+		"/usr/sbin/php-fpm8.1",
+		"/usr/sbin/php-fpm8.0",
+		"/usr/sbin/php-fpm",
+		"/usr/bin/php-fpm8.3",
+		"/usr/bin/php-fpm8.2",
+		"/usr/bin/php-fpm",
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
 }
 
 func detectFramework(root string) (framework, docRoot string) {
