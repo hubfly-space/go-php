@@ -2,8 +2,10 @@ package ui
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sync/atomic"
 	"time"
@@ -54,6 +56,8 @@ func NewStatusProvider(version, addr, docRoot, framework string) *StatusProvider
 type SiteConfig struct {
 	ID         string            `json:"id"`
 	Name       string            `json:"name"`
+	Port       int               `json:"port"`
+	Webroot    string            `json:"webroot"`
 	Domain     string            `json:"domain"`
 	Root       string            `json:"root"`
 	PHPVersion string            `json:"php_version"`
@@ -177,7 +181,21 @@ func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
 		if sites == nil {
 			sites = &[]SiteConfig{}
 		}
-		jsonResp(w, map[string]any{"sites": *sites})
+		// Annotate each site with its actual running status.
+		result := make([]SiteConfig, len(*sites))
+		for i, site := range *sites {
+			result[i] = site
+			if s.siteMgr.IsRunning(site.ID) {
+				if result[i].Status != "active" {
+					result[i].Status = "active"
+				}
+			} else {
+				if result[i].Status == "active" {
+					result[i].Status = "stopped"
+				}
+			}
+		}
+		jsonResp(w, map[string]any{"sites": result})
 
 	case http.MethodPost:
 		var site SiteConfig
@@ -192,7 +210,45 @@ func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
 			site.Status = "active"
 		}
 
+		// Validate port.
+		if site.Port <= 0 || site.Port > 65535 {
+			jsonErr(w, "invalid port number", http.StatusBadRequest)
+			return
+		}
+
+		// Auto-create webroot directory if not specified.
+		if site.Webroot == "" {
+			home, _ := os.UserHomeDir()
+			site.Webroot = filepath.Join(home, ".gateway", "sites", site.ID, "webroot")
+		}
+		if err := os.MkdirAll(site.Webroot, 0755); err != nil {
+			jsonErr(w, fmt.Sprintf("failed to create webroot: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// Check for port conflicts.
 		sites := s.status.Sites.Load()
+		if sites != nil {
+			for _, existing := range *sites {
+				if existing.Port == site.Port {
+					jsonErr(w, fmt.Sprintf("port %d is already in use by site %q", site.Port, existing.Name), http.StatusConflict)
+					return
+				}
+			}
+		}
+
+		// Start the site server.
+		if err := s.siteMgr.StartSite(site); err != nil {
+			site.Status = "error"
+			s.logBuffer.Add(LogEntry{
+				Timestamp: time.Now(),
+				Level:     "error",
+				Message:   fmt.Sprintf("failed to start site %s: %v", site.Name, err),
+			})
+			jsonErr(w, fmt.Sprintf("failed to start site server: %v", err), http.StatusInternalServerError)
+			return
+		}
+
 		if sites == nil {
 			sites = &[]SiteConfig{}
 		}
@@ -202,7 +258,7 @@ func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
 		s.logBuffer.Add(LogEntry{
 			Timestamp: time.Now(),
 			Level:     "info",
-			Message:   "site created: " + site.Name,
+			Message:   fmt.Sprintf("site created and started: %s (port %d, webroot: %s)", site.Name, site.Port, site.Webroot),
 		})
 
 		jsonResp(w, map[string]any{"site": site})
@@ -254,6 +310,40 @@ func (s *Server) handleSiteByID(w http.ResponseWriter, r *http.Request) {
 		site.ID = id
 		site.CreatedAt = (*sites)[idx].CreatedAt
 		site.UpdatedAt = time.Now()
+
+		oldSite := (*sites)[idx]
+
+		// Handle port change: stop old server, start new one.
+		if site.Port != oldSite.Port || site.Webroot != oldSite.Webroot || site.Status != oldSite.Status {
+			// Stop old server if running.
+			if s.siteMgr.IsRunning(id) {
+				if err := s.siteMgr.StopSite(id); err != nil {
+					s.logBuffer.Add(LogEntry{
+						Timestamp: time.Now(),
+						Level:     "warn",
+						Message:   fmt.Sprintf("error stopping site %s: %v", oldSite.Name, err),
+					})
+				}
+			}
+
+			// Start new server if status is active.
+			if site.Status == "active" {
+				if err := s.siteMgr.StartSite(site); err != nil {
+					site.Status = "error"
+					s.logBuffer.Add(LogEntry{
+						Timestamp: time.Now(),
+						Level:     "error",
+						Message:   fmt.Sprintf("failed to start site %s: %v", site.Name, err),
+					})
+					newSites := *sites
+					newSites[idx] = site
+					s.status.Sites.Store(&newSites)
+					jsonErr(w, fmt.Sprintf("failed to start site server: %v", err), http.StatusInternalServerError)
+					return
+				}
+			}
+		}
+
 		newSites := *sites
 		newSites[idx] = site
 		s.status.Sites.Store(&newSites)
@@ -272,6 +362,17 @@ func (s *Server) handleSiteByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		name := (*sites)[idx].Name
+		siteID := (*sites)[idx].ID
+
+		// Stop the site server if running.
+		if err := s.siteMgr.StopSite(siteID); err != nil {
+			s.logBuffer.Add(LogEntry{
+				Timestamp: time.Now(),
+				Level:     "warn",
+				Message:   fmt.Sprintf("error stopping site %s: %v", name, err),
+			})
+		}
+
 		newSites := append((*sites)[:idx], (*sites)[idx+1:]...)
 		s.status.Sites.Store(&newSites)
 
