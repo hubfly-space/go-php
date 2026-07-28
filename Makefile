@@ -16,6 +16,17 @@ all: build
 
 # ─── Build ───────────────────────────────────────────────────
 
+## Build the React management UI dashboard
+dashboard-build:
+	npm run build --prefix dashboard
+
+## Copy dashboard build artifacts to Go static embed directory
+dashboard-embed:
+	cp -r dashboard/dist/* internal/ui/static/
+
+## Build and embed dashboard
+dashboard: dashboard-build dashboard-embed
+
 ## Build the gateway binary
 build:
 	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY) ./cmd/gateway
