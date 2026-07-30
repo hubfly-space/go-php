@@ -66,14 +66,11 @@ func TestGenerateConfigExtensionsComment(t *testing.T) {
 	}
 	content := string(data)
 
-	if !strings.Contains(content, "; Extension INI files are loaded") {
-		t.Error("expected extension comment in config")
+	if !strings.Contains(content, "php_admin_value[extension] = curl.so") {
+		t.Error("expected curl.so extension directive")
 	}
-	if !strings.Contains(content, "; Extension: curl") {
-		t.Error("expected curl extension comment")
-	}
-	if !strings.Contains(content, "; Extension: xdebug") {
-		t.Error("expected xdebug extension comment")
+	if !strings.Contains(content, "php_admin_value[zend_extension] = xdebug.so") {
+		t.Error("expected xdebug.so zend_extension directive")
 	}
 }
 
@@ -99,8 +96,8 @@ func TestGenerateConfigEmptyExtensions(t *testing.T) {
 	}
 	content := string(data)
 
-	if strings.Contains(content, "Extension INI files") {
-		t.Error("should not have extension comment when no extensions")
+	if strings.Contains(content, "Extensions loaded from resolved config") {
+		t.Error("should not have extension section when no extensions")
 	}
 }
 

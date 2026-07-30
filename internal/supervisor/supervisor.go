@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"sync"
 	"time"
 )
@@ -295,14 +294,14 @@ security.limit_extensions = .php
 	}
 
 	if s.cfg.Extensions != nil && len(s.cfg.Extensions) > 0 {
-		b = append(b, "\n; Extension INI files are loaded from PHP_INI_SCAN_DIR/conf.d/\n"...)
-		extNames := make([]string, 0, len(s.cfg.Extensions))
+		b = append(b, "\n; Extensions loaded from resolved config\n"...)
 		for _, ext := range s.cfg.Extensions {
-			extNames = append(extNames, ext.Name)
-		}
-		sort.Strings(extNames)
-		for _, name := range extNames {
-			b = append(b, fmt.Sprintf("; Extension: %s\n", name)...)
+			switch ext.Type {
+			case "zend_extension":
+				b = append(b, fmt.Sprintf("php_admin_value[zend_extension] = %s.so\n", ext.Name)...)
+			default:
+				b = append(b, fmt.Sprintf("php_admin_value[extension] = %s.so\n", ext.Name)...)
+			}
 		}
 	}
 
