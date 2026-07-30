@@ -22,6 +22,7 @@ import (
 	"github.com/go-php/gateway/internal/php/cgi"
 	"github.com/go-php/gateway/internal/php/fastcgi"
 	"github.com/go-php/gateway/internal/router"
+	"github.com/go-php/gateway/internal/runtime"
 	"github.com/go-php/gateway/internal/supervisor"
 	"github.com/go-php/gateway/internal/ui"
 )
@@ -208,6 +209,23 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr str
 			slog.Warn("could not resolve PHP extensions", "error", err)
 		}
 
+		// Auto-provision missing OS packages for extensions.
+		extNames := make([]string, 0, len(extensions))
+		for _, ext := range extensions {
+			extNames = append(extNames, ext.Name)
+		}
+		provisioner := runtime.NewProvisioner(cfg.PHP.Binary)
+		if missing := provisioner.MissingExtensions(extNames); len(missing) > 0 {
+			slog.Info("provisioning OS packages for missing extensions", "missing", missing)
+			installed, errs := provisioner.Provision(context.Background(), extNames)
+			for _, err := range errs {
+				slog.Warn("extension provisioning warning", "error", err)
+			}
+			if len(installed) > 0 {
+				slog.Info("installed OS packages for extensions", "count", len(installed))
+			}
+		}
+
 		supExtensions := make([]supervisor.Extension, 0, len(extensions))
 		for _, ext := range extensions {
 			supExtensions = append(supExtensions, supervisor.Extension{
@@ -347,6 +365,14 @@ func (h *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		normalized = route.Rewrite(normalized)
 	}
 
+	// Check if the path should be routed to PHP-FPM.
+	if strings.HasSuffix(normalized, ".php") {
+		if h.fpm != nil && h.fpm.State() == supervisor.StateReady {
+			h.servePHP(w, r, normalized, reqID, start)
+			return
+		}
+	}
+
 	// Check for static file.
 	rf, err := h.resolver.Resolve(normalized)
 	if err == nil {
@@ -355,7 +381,7 @@ func (h *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try PHP.
+	// Try PHP (for SCRIPT_FILENAME style execution).
 	if h.fpm != nil && h.fpm.State() == supervisor.StateReady {
 		h.servePHP(w, r, normalized, reqID, start)
 		return

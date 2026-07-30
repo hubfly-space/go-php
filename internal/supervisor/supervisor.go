@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 )
@@ -107,15 +108,6 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	s.cancel = cancel
 
 	cmd := exec.CommandContext(ctx, s.cfg.PHPBinary, "--fpm-config", configPath)
-
-	// Set PHP_INI_SCAN_DIR to include runtime's conf.d directory.
-	if s.cfg.RuntimeDir != "" {
-		confDir := filepath.Join(s.cfg.RuntimeDir, "conf.d")
-		if info, err := os.Stat(confDir); err == nil && info.IsDir() {
-			cmd.Env = append(os.Environ(), "PHP_INI_SCAN_DIR="+confDir)
-		}
-	}
-
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	s.cmd = cmd
@@ -217,6 +209,48 @@ func (s *Supervisor) waitForSocket(ctx context.Context, timeout time.Duration) e
 	return errors.New("timeout waiting for socket")
 }
 
+// knownBuiltinExtensions lists PHP extensions that are compiled into PHP
+// and should not be loaded as shared objects (.so).
+var knownBuiltinExtensions = map[string]bool{
+	"core": true, "standard": true, "date": true, "json": true,
+	"xml": true, "xmlwriter": true, "tokenizer": true, "dom": true,
+	"libxml": true, "spl": true, "pcre": true, "filter": true,
+	"hash": true, "random": true, "ctype": true,
+}
+
+// extensionLoadOrder defines dependencies that must load before their dependents.
+// Entries with a lower priority value load first. Core/dependency extensions
+// get priority 10, loadable extensions get priority 20.
+var extensionLoadPriority = map[string]int{
+	"mysqlnd":  1,
+	"pdo":      2,
+	"sqlite3":  3,
+	"mysqli":   10,
+	"pdo_mysql": 11,
+	"pdo_sqlite": 12,
+}
+
+// sortExtensionsByDependency sorts extensions so that dependencies load first.
+func sortExtensionsByDependency(extensions []Extension) []Extension {
+	sorted := make([]Extension, len(extensions))
+	copy(sorted, extensions)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		pi := extensionLoadPriority[sorted[i].Name]
+		pj := extensionLoadPriority[sorted[j].Name]
+		if pi != 0 || pj != 0 {
+			if pi == 0 {
+				pi = 20
+			}
+			if pj == 0 {
+				pj = 20
+			}
+			return pi < pj
+		}
+		return sorted[i].Name < sorted[j].Name
+	})
+	return sorted
+}
+
 // generateConfig writes an FPM config file and returns its path.
 func (s *Supervisor) generateConfig() (string, error) {
 	dir := filepath.Dir(s.cfg.PIDFile)
@@ -295,7 +329,10 @@ security.limit_extensions = .php
 
 	if s.cfg.Extensions != nil && len(s.cfg.Extensions) > 0 {
 		b = append(b, "\n; Extensions loaded from resolved config\n"...)
-		for _, ext := range s.cfg.Extensions {
+		for _, ext := range sortExtensionsByDependency(s.cfg.Extensions) {
+			if knownBuiltinExtensions[ext.Name] {
+				continue
+			}
 			switch ext.Type {
 			case "zend_extension":
 				b = append(b, fmt.Sprintf("php_admin_value[zend_extension] = %s.so\n", ext.Name)...)
