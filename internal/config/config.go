@@ -18,6 +18,25 @@ type Config struct {
 	Security      SecurityConfig      `yaml:"security"`
 	Observability ObservabilityConfig `yaml:"observability"`
 	TLS           TLSConfig           `yaml:"tls"`
+	Static        StaticConfig        `yaml:"static"`
+}
+
+// StaticConfig defines static file serving behavior (§12).
+type StaticConfig struct {
+	// MaxAge is the default Cache-Control max-age for static files. Zero
+	// disables Cache-Control entirely, which is the historical behavior.
+	MaxAge time.Duration `yaml:"max_age"`
+
+	// ImmutablePaths are prefixes whose contents are content-addressed and can
+	// be cached forever.
+	ImmutablePaths []string `yaml:"immutable_paths"`
+
+	// NoCachePaths are prefixes that must never be cached.
+	NoCachePaths []string `yaml:"no_cache_paths"`
+
+	// Precompressed enables serving a sibling .br or .gz file when the client
+	// accepts that encoding.
+	Precompressed bool `yaml:"precompressed"`
 }
 
 // TLSConfig defines HTTPS settings (§30).
@@ -226,6 +245,11 @@ func DefaultConfig() *Config {
 				RequestsPerMinute: 600,
 				Burst:             100,
 			},
+		},
+		Static: StaticConfig{
+			MaxAge:         time.Hour,
+			ImmutablePaths: []string{"/assets/", "/static/", "/dist/", "/build/"},
+			Precompressed:  true,
 		},
 		Observability: ObservabilityConfig{
 			Metrics: MetricsConfig{Enabled: true, Path: "/metrics"},

@@ -3,8 +3,12 @@ package deploy
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -152,32 +156,96 @@ func (s *Switcher) stepFail(result *DeployResult, step *DeployStep, name string,
 	return err
 }
 
-// Prober checks if a release is healthy.
+// Prober checks if a release is healthy before it is activated.
 type Prober struct {
 	HTTPClient *http.Client
+
+	// HealthURL, when set, is requested after the structural checks pass. A
+	// non-2xx response fails the probe.
+	HealthURL string
+
+	// Entrypoints are release-relative files that must exist. Defaults to
+	// index.php when empty.
+	Entrypoints []string
 }
 
 // Probe checks if a release can serve requests.
+//
+// This used to `return true, nil` unconditionally, with a comment saying it
+// verified the release structure — which it also did not do. A health gate that
+// cannot fail is worse than no gate, because the deploy pipeline reports a
+// passing check that never ran.
+//
+// Full candidate verification (§21.3: start a candidate pool, check the PHP
+// version and extensions, run warm-up URLs) needs the supervisor, which this
+// package does not own. What is checked here is checked honestly.
 func (p *Prober) Probe(ctx context.Context, rel *Release) (bool, error) {
 	if p.HTTPClient == nil {
 		p.HTTPClient = &http.Client{Timeout: 5 * time.Second}
 	}
 
-	// Check if the release directory exists and has expected files.
-	if rel.Dir == "" {
-		return false, nil
+	if rel == nil || rel.Dir == "" {
+		return false, fmt.Errorf("probe: release has no directory")
 	}
 
-	// In a real deployment, this would:
-	// 1. Start a temporary PHP-FPM pool for the release
-	// 2. Send health check requests
-	// 3. Verify response codes
-	// 4. Shut down the temporary pool
-	// For now, we verify the release structure exists.
+	info, err := os.Stat(rel.Dir)
+	if err != nil {
+		return false, fmt.Errorf("probe: release directory: %w", err)
+	}
+	if !info.IsDir() {
+		return false, fmt.Errorf("probe: release path %s is not a directory", rel.Dir)
+	}
+
+	entrypoints := p.Entrypoints
+	if len(entrypoints) == 0 {
+		entrypoints = []string{"index.php"}
+	}
+
+	// At least one entrypoint must exist, checked in both the release root and
+	// a public/ subdirectory so framework layouts pass.
+	found := false
+	for _, entry := range entrypoints {
+		for _, candidate := range []string{
+			filepath.Join(rel.Dir, entry),
+			filepath.Join(rel.Dir, "public", entry),
+		} {
+			if st, statErr := os.Stat(candidate); statErr == nil && st.Mode().IsRegular() {
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+	}
+	if !found {
+		return false, fmt.Errorf("probe: no entrypoint (%s) found in %s",
+			strings.Join(entrypoints, ", "), rel.Dir)
+	}
+
+	if p.HealthURL == "" {
+		return true, nil
+	}
+
 	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	_ = probeCtx // would be used for HTTP probes
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, p.HealthURL, nil)
+	if err != nil {
+		return false, fmt.Errorf("probe: build health request: %w", err)
+	}
+
+	resp, err := p.HTTPClient.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("probe: health request: %w", err)
+	}
+	defer resp.Body.Close()
+	// Drain so the connection can be reused.
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false, fmt.Errorf("probe: health check returned %d", resp.StatusCode)
+	}
 
 	return true, nil
 }

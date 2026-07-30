@@ -50,18 +50,29 @@ func NewCacheControlledFileServer(root, index string, cache *CachePolicy) *Cache
 	}
 }
 
+// CacheControl returns the Cache-Control header value for a request path.
+//
+// This is separated from the file server so a caller that resolves paths
+// through Resolver — as the gateway does, and must — can reuse the policy
+// without adopting CacheControlledFileServer's own, weaker path handling.
+func (c *CachePolicy) CacheControl(path string) string {
+	for _, p := range c.NoCachePaths {
+		if strings.HasPrefix(path, p) {
+			return "no-cache, no-store, must-revalidate"
+		}
+	}
+	for _, p := range c.ImmutablePaths {
+		if strings.HasPrefix(path, p) {
+			return "public, max-age=31536000, immutable"
+		}
+	}
+	return "public, max-age=" + itoa(int(c.DefaultMaxAge.Seconds()))
+}
+
 func (s *CacheControlledFileServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 
-	// Determine cache directive.
-	if s.shouldNoCache(path) {
-		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	} else if s.shouldImmutable(path) {
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	} else {
-		maxAge := int(s.Cache.DefaultMaxAge.Seconds())
-		w.Header().Set("Cache-Control", "public, max-age="+itoa(maxAge))
-	}
+	w.Header().Set("Cache-Control", s.Cache.CacheControl(path))
 
 	// Generate ETag if enabled.
 	if s.Cache.ETag {
@@ -69,24 +80,6 @@ func (s *CacheControlledFileServer) ServeHTTP(w http.ResponseWriter, r *http.Req
 	}
 
 	s.PrecompressedFileServer.ServeHTTP(w, r)
-}
-
-func (s *CacheControlledFileServer) shouldNoCache(path string) bool {
-	for _, p := range s.Cache.NoCachePaths {
-		if strings.HasPrefix(path, p) {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *CacheControlledFileServer) shouldImmutable(path string) bool {
-	for _, p := range s.Cache.ImmutablePaths {
-		if strings.HasPrefix(path, p) {
-			return true
-		}
-	}
-	return false
 }
 
 func (s *CacheControlledFileServer) setETag(w http.ResponseWriter, r *http.Request, path string) {
