@@ -17,13 +17,18 @@ func NewHtaccessTranslator() *HtaccessTranslator {
 }
 
 // TranslatedRoute is a route converted from .htaccess.
+//
+// The yaml tags must match config.RouteConfig, because the point of the
+// translation is to produce a routes block that can be pasted into
+// gateway.yaml. Without them the output keys would be Go field names
+// ("pathprefix"), which the config loader silently ignores.
 type TranslatedRoute struct {
-	PathPrefix string   `json:"path_prefix,omitempty"`
-	Path       string   `json:"path,omitempty"`
-	Regex      string   `json:"regex,omitempty"`
-	Status     int      `json:"status,omitempty"`
-	Target     string   `json:"target,omitempty"`
-	Methods    []string `json:"methods,omitempty"`
+	PathPrefix string   `json:"path_prefix,omitempty" yaml:"path_prefix,omitempty"`
+	Path       string   `json:"path,omitempty" yaml:"path,omitempty"`
+	Regex      string   `json:"regex,omitempty" yaml:"regex,omitempty"`
+	Status     int      `json:"status,omitempty" yaml:"status,omitempty"`
+	Target     string   `json:"target,omitempty" yaml:"target,omitempty"`
+	Methods    []string `json:"methods,omitempty" yaml:"methods,omitempty"`
 }
 
 // Translate converts .htaccess content to gateway routes.

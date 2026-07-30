@@ -102,7 +102,6 @@ func (s *Server) Authenticate(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(token), []byte(s.cfg.Token)) == 1
 }
 
-
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 

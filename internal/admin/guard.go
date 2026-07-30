@@ -102,27 +102,68 @@ func (g *Guard) deny(w http.ResponseWriter, r *http.Request, status int, action,
 	fmt.Fprintf(w, `{"error":%q}`+"\n", msg)
 }
 
-// authenticate reports whether the request carries the configured bearer token.
-// It is deliberately fail-closed when no token is configured.
+// SessionCookie is the name of the cookie issued after a successful
+// token-in-URL handshake.
+const SessionCookie = "gateway_session"
+
+// tokenMatches compares a candidate against the configured token in constant
+// time. An unset token never matches.
+func (g *Guard) tokenMatches(candidate string) bool {
+	if g.cfg.Token == "" || candidate == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(candidate), []byte(g.cfg.Token)) == 1
+}
+
+// authenticate reports whether the request carries the configured token, by
+// bearer header, session cookie, or (for the page load and WebSocket upgrade
+// only) a query parameter. It is deliberately fail-closed when no token is
+// configured.
 func (g *Guard) authenticate(r *http.Request) bool {
 	if g.cfg.Token == "" {
 		return false
 	}
 
-	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") {
-		// Accept a query parameter only for the WebSocket upgrade, because the
-		// browser WebSocket API cannot set request headers.
-		if isWebSocketUpgrade(r) {
-			if t := r.URL.Query().Get("token"); t != "" {
-				return subtle.ConstantTimeCompare([]byte(t), []byte(g.cfg.Token)) == 1
-			}
-		}
-		return false
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+		return g.tokenMatches(strings.TrimPrefix(auth, "Bearer "))
 	}
 
-	token := strings.TrimPrefix(auth, "Bearer ")
-	return subtle.ConstantTimeCompare([]byte(token), []byte(g.cfg.Token)) == 1
+	// The dashboard authenticates by cookie. Because the cookie is HttpOnly and
+	// SameSite=Strict, page JavaScript never holds the token and a cross-site
+	// page cannot cause the browser to send it. The Origin check in Wrap is the
+	// second half of the CSRF defense.
+	if c, err := r.Cookie(SessionCookie); err == nil && g.tokenMatches(c.Value) {
+		return true
+	}
+
+	// A query parameter is accepted only where a header cannot be set: the
+	// initial page load (which then receives the cookie) and the WebSocket
+	// handshake, since the browser WebSocket API cannot send headers.
+	if isWebSocketUpgrade(r) || isPageLoad(r) {
+		return g.tokenMatches(r.URL.Query().Get("token"))
+	}
+
+	return false
+}
+
+// isPageLoad reports whether this is a GET for the dashboard document itself,
+// as opposed to an API call.
+func isPageLoad(r *http.Request) bool {
+	return r.Method == http.MethodGet && !strings.HasPrefix(r.URL.Path, "/api/")
+}
+
+// issueSession sets the session cookie after a successful query-parameter
+// handshake, so the token does not have to stay in the address bar.
+func (g *Guard) issueSession(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     SessionCookie,
+		Value:    g.cfg.Token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		Secure:   r.TLS != nil,
+		MaxAge:   int((12 * time.Hour).Seconds()),
+	})
 }
 
 // isWebSocketUpgrade reports whether the request is a WebSocket handshake.
@@ -200,6 +241,13 @@ func (g *Guard) Wrap(next http.Handler) http.Handler {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="gateway management API"`)
 			g.deny(w, r, http.StatusUnauthorized, "auth_failed", "unauthorized")
 			return
+		}
+
+		// A page load that authenticated by query parameter gets a cookie, so
+		// the token stops travelling in the URL (where it would land in
+		// history and Referer headers).
+		if isPageLoad(r) && r.URL.Query().Get("token") != "" {
+			g.issueSession(w, r)
 		}
 
 		// Record mutations only; logging every poll would drown the audit log.

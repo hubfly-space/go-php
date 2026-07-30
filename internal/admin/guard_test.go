@@ -189,3 +189,89 @@ func TestGuardCountsDenials(t *testing.T) {
 		t.Errorf("denials = %d, want 3", got)
 	}
 }
+
+func TestGuardIssuesSessionCookieOnPageLoad(t *testing.T) {
+	_, h := testGuard(t, "secret")
+
+	req := httptest.NewRequest("GET", "/?token=secret", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+
+	var session *http.Cookie
+	for _, c := range w.Result().Cookies() {
+		if c.Name == SessionCookie {
+			session = c
+		}
+	}
+	if session == nil {
+		t.Fatal("no session cookie issued")
+	}
+	if !session.HttpOnly {
+		t.Error("session cookie must be HttpOnly so page JS cannot read the token")
+	}
+	if session.SameSite != http.SameSiteStrictMode {
+		t.Error("session cookie must be SameSite=Strict to blunt CSRF")
+	}
+}
+
+func TestGuardAcceptsSessionCookie(t *testing.T) {
+	_, h := testGuard(t, "secret")
+
+	req := httptest.NewRequest("GET", "/api/sites", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookie, Value: "secret"})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 with a valid session cookie", w.Code)
+	}
+}
+
+func TestGuardRejectsWrongSessionCookie(t *testing.T) {
+	_, h := testGuard(t, "secret")
+
+	req := httptest.NewRequest("GET", "/api/sites", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookie, Value: "not-the-token"})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", w.Code)
+	}
+}
+
+func TestGuardTokenQueryDoesNotAuthenticateAPICalls(t *testing.T) {
+	// The query parameter is for the page load and the WebSocket upgrade only.
+	// Honouring it on API calls would make every CSRF defense moot, since a
+	// cross-site page can trivially put a token in a URL.
+	_, h := testGuard(t, "secret")
+
+	for _, method := range []string{"POST", "PUT", "DELETE"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(method, "/api/sites?token=secret", nil))
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("%s status = %d, want 401", method, w.Code)
+		}
+	}
+}
+
+func TestGuardCookieDoesNotBypassOriginCheck(t *testing.T) {
+	// A cookie is sent by the browser automatically, so the origin check is
+	// what stops a cross-site page from driving the API with it.
+	_, h := testGuard(t, "secret")
+
+	req := httptest.NewRequest("POST", "/api/sites", nil)
+	req.Host = "127.0.0.1:30200"
+	req.Header.Set("Origin", "https://evil.example")
+	req.AddCookie(&http.Cookie{Name: SessionCookie, Value: "secret"})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", w.Code)
+	}
+}

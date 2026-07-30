@@ -139,6 +139,9 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "  config      Manage configuration (validate, init)\n")
 	fmt.Fprintf(os.Stderr, "  deploy      Manage releases and deployments (create, activate, rollback, list)\n")
 	fmt.Fprintf(os.Stderr, "  php         Manage PHP runtimes (list, install, use, remove)\n")
+	fmt.Fprintf(os.Stderr, "  migrate     Translate Apache config to gateway routes (htaccess)\n")
+	fmt.Fprintf(os.Stderr, "  test        Run route contract tests (routes)\n")
+	fmt.Fprintf(os.Stderr, "  shadow      Compare an active runtime against a candidate\n")
 	fmt.Fprintf(os.Stderr, "  incident    Capture diagnostic incident snapshot\n")
 	fmt.Fprintf(os.Stderr, "  service     Install systemd service unit\n")
 	fmt.Fprintf(os.Stderr, "  version     Show build and version metadata\n\n")
@@ -377,7 +380,9 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr str
 		// Print the token to stderr, not the structured log, so it is visible
 		// to whoever started the process without being swept into log
 		// aggregation.
-		fmt.Fprintf(os.Stderr, "\nManagement API token: %s\n", uiServer.Token())
+		fmt.Fprintf(os.Stderr, "\nManagement dashboard: %s/?token=%s\n",
+			ui.FormatAddr(uiCfg.Addr), uiServer.Token())
+		fmt.Fprintf(os.Stderr, "Management API token: %s\n", uiServer.Token())
 		fmt.Fprintf(os.Stderr, "  curl -H 'Authorization: Bearer %s' %s/api/status\n\n",
 			uiServer.Token(), ui.FormatAddr(uiCfg.Addr))
 
