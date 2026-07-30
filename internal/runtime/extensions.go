@@ -221,29 +221,30 @@ type ExtensionProfile struct {
 }
 
 // BuiltInProfiles returns the standard extension profiles.
+// Only lists loadable extensions (built-in PHP modules like core, standard, date, json are excluded).
 func BuiltInProfiles() []ExtensionProfile {
 	return []ExtensionProfile{
 		{
 			Name:        "minimal",
 			Description: "Bare minimum for basic PHP scripts",
-			Extensions:  []string{"core", "standard", "date"},
+			Extensions:  []string{"pdo", "pdo_sqlite", "mbstring", "curl", "json", "xml"},
 		},
 		{
 			Name:        "web-standard",
 			Description: "Standard web application extensions",
 			Extensions: []string{
-				"core", "standard", "date", "pdo", "pdo_mysql", "pdo_sqlite",
-				"mysqli", "mbstring", "curl", "gd", "json", "xml", "xmlwriter",
-				"tokenizer", "bcmath", "fileinfo", "intl", "zip", "exif",
+				"pdo", "pdo_mysql", "pdo_sqlite",
+				"mysqli", "mbstring", "curl", "gd",
+				"bcmath", "fileinfo", "intl", "zip", "exif",
 			},
 		},
 		{
 			Name:        "wordpress",
 			Description: "WordPress-optimized extension set",
 			Extensions: []string{
-				"core", "standard", "date", "pdo", "pdo_mysql", "mysqli",
-				"mbstring", "curl", "gd", "json", "xml", "xmlwriter",
-				"tokenizer", "bcmath", "fileinfo", "intl", "zip", "exif",
+				"pdo", "pdo_mysql", "mysqli",
+				"mbstring", "curl", "gd",
+				"bcmath", "fileinfo", "intl", "zip", "exif",
 				"sockets", "openssl",
 			},
 		},
@@ -251,19 +252,19 @@ func BuiltInProfiles() []ExtensionProfile {
 			Name:        "laravel",
 			Description: "Laravel-optimized extension set",
 			Extensions: []string{
-				"core", "standard", "date", "pdo", "pdo_mysql", "pdo_sqlite",
+				"pdo", "pdo_mysql", "pdo_sqlite",
 				"pdo_pgsql", "pgsql", "mysqli", "mbstring", "curl", "gd",
-				"json", "xml", "xmlwriter", "tokenizer", "bcmath", "fileinfo",
-				"intl", "zip", "exif", "openssl", "sodium", "tokenizer",
+				"bcmath", "fileinfo",
+				"intl", "zip", "exif", "openssl", "sodium",
 			},
 		},
 		{
 			Name:        "development",
 			Description: "Extensions useful in development (includes xdebug)",
 			Extensions: []string{
-				"core", "standard", "date", "pdo", "pdo_mysql", "pdo_sqlite",
-				"mysqli", "mbstring", "curl", "gd", "json", "xml", "xmlwriter",
-				"tokenizer", "bcmath", "fileinfo", "intl", "zip", "exif",
+				"pdo", "pdo_mysql", "pdo_sqlite",
+				"mysqli", "mbstring", "curl", "gd",
+				"bcmath", "fileinfo", "intl", "zip", "exif",
 				"xdebug", "pcov",
 			},
 		},
