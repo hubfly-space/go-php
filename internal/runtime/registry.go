@@ -35,13 +35,14 @@ func (r *Registry) Init() error {
 }
 
 // Install adds a runtime to the registry from a local directory.
-func (r *Registry) Install(manifest *Manifest, srcDir string) (*Runtime, error) {
+// extensions is optional; if nil, the runtime ID is computed without extension hash.
+func (r *Registry) Install(manifest *Manifest, srcDir string, extensions []Extension) (*Runtime, error) {
 	id := GenerateID(
 		manifest.Version,
 		manifest.Platform,
 		manifest.Arch,
 		manifest.Flavor,
-		nil, // extensions resolved later
+		extensions,
 	)
 
 	destDir := filepath.Join(r.Root, string(id))
@@ -67,6 +68,7 @@ func (r *Registry) Install(manifest *Manifest, srcDir string) (*Runtime, error) 
 		Platform:    manifest.Platform,
 		Arch:        manifest.Arch,
 		BuildFlavor: manifest.Flavor,
+		Extensions:  extensions,
 	}
 
 	return rt, nil
@@ -170,6 +172,32 @@ func (r *Registry) CurrentRuntime() *Runtime {
 // RuntimeDir returns the path to a runtime's directory.
 func (r *Registry) RuntimeDir(id RuntimeID) string {
 	return filepath.Join(r.Root, string(id))
+}
+
+// ExtensionManager creates an ExtensionManager for a given runtime.
+func (r *Registry) ExtensionManager(id RuntimeID) *ExtensionManager {
+	return NewExtensionManager(r.RuntimeDir(id))
+}
+
+// ListExtensions returns the installed extensions for a runtime.
+func (r *Registry) ListExtensions(id RuntimeID) ([]InstalledExtension, error) {
+	return r.ExtensionManager(id).ListInstalled()
+}
+
+// VerifyExtensions checks that all required extensions exist in a runtime.
+// Missing extensions are returned in the error message.
+func (r *Registry) VerifyExtensions(id RuntimeID, required []string) error {
+	em := r.ExtensionManager(id)
+	var missing []string
+	for _, name := range required {
+		if !em.ValidateExists(name) {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("runtime %s missing extensions: %v", id, missing)
+	}
+	return nil
 }
 
 // State represents the registry state file.

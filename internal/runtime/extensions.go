@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // ExtensionManager handles PHP extension installation and configuration.
@@ -27,7 +28,7 @@ type InstalledExtension struct {
 	Enabled bool   `json:"enabled"`
 }
 
-// ListInstalled returns all installed extensions.
+// ListInstalled returns all installed extensions from the manifest.
 func (m *ExtensionManager) ListInstalled() ([]InstalledExtension, error) {
 	manifestPath := filepath.Join(m.RuntimeDir, "manifest.json")
 	data, err := os.ReadFile(manifestPath)
@@ -48,14 +49,27 @@ func (m *ExtensionManager) ListInstalled() ([]InstalledExtension, error) {
 	return manifest.Extensions, nil
 }
 
-// Enable creates a conf.d file for an extension.
+// Enable creates a conf.d file for an extension (extension type).
 func (m *ExtensionManager) Enable(name string) error {
+	return m.EnableWithType(name, "extension")
+}
+
+// EnableWithType creates a conf.d file for an extension with the given type.
+// Supported types: "extension", "zend_extension".
+func (m *ExtensionManager) EnableWithType(name, extType string) error {
 	confDir := filepath.Join(m.RuntimeDir, "conf.d")
 	if err := os.MkdirAll(confDir, 0755); err != nil {
 		return fmt.Errorf("create conf.d: %w", err)
 	}
 
-	content := fmt.Sprintf("extension=%s.so\n", name)
+	var content string
+	switch extType {
+	case "zend_extension":
+		content = fmt.Sprintf("zend_extension=%s.so\n", name)
+	default:
+		content = fmt.Sprintf("extension=%s.so\n", name)
+	}
+
 	path := filepath.Join(confDir, fmt.Sprintf("20-%s.ini", name))
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return fmt.Errorf("enable %s: %w", name, err)
@@ -77,6 +91,126 @@ func (m *ExtensionManager) IsEnabled(name string) bool {
 	path := filepath.Join(m.RuntimeDir, "conf.d", fmt.Sprintf("20-%s.ini", name))
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// BulkEnable enables multiple extensions at once.
+func (m *ExtensionManager) BulkEnable(names []string) error {
+	for _, name := range names {
+		if err := m.Enable(name); err != nil {
+			return fmt.Errorf("bulk enable %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// BulkDisable disables multiple extensions at once.
+func (m *ExtensionManager) BulkDisable(names []string) error {
+	for _, name := range names {
+		if err := m.Disable(name); err != nil {
+			return fmt.Errorf("bulk disable %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// GetEnabled returns the list of currently enabled extension names.
+func (m *ExtensionManager) GetEnabled() ([]string, error) {
+	confDir := filepath.Join(m.RuntimeDir, "conf.d")
+	entries, err := os.ReadDir(confDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var names []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		// Expect format: 20-{name}.ini
+		if strings.HasSuffix(name, ".ini") && len(name) > 7 {
+			extName := name[3 : len(name)-4] // strip "20-" prefix and ".ini" suffix
+			if extName != "" {
+				names = append(names, extName)
+			}
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// ValidateExists checks if an extension's .so file exists in the runtime.
+func (m *ExtensionManager) ValidateExists(name string) bool {
+	// Check common locations.
+	locations := []string{
+		filepath.Join(m.RuntimeDir, "lib", "php", "extensions", name+".so"),
+		filepath.Join(m.RuntimeDir, "extensions", name+".so"),
+		filepath.Join(m.RuntimeDir, "lib", name+".so"),
+	}
+	for _, loc := range locations {
+		if _, err := os.Stat(loc); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// ApplyExtensions applies a resolved set of extensions atomically.
+// It ensures only the specified extensions are enabled (disables others).
+func (m *ExtensionManager) ApplyExtensions(extensions []configResolvedExtension) error {
+	// Get current enabled set.
+	current, err := m.GetEnabled()
+	if err != nil {
+		return fmt.Errorf("get enabled: %w", err)
+	}
+
+	// Build target set.
+	target := make(map[string]string)
+	for _, ext := range extensions {
+		target[ext.Name] = ext.Type
+	}
+
+	// Disable extensions not in target set.
+	for _, name := range current {
+		if _, ok := target[name]; !ok {
+			if err := m.Disable(name); err != nil {
+				return fmt.Errorf("disable %s: %w", name, err)
+			}
+		}
+	}
+
+	// Enable extensions in target set.
+	for _, ext := range extensions {
+		if !m.IsEnabled(ext.Name) || m.getEnabledType(ext.Name) != ext.Type {
+			if err := m.EnableWithType(ext.Name, ext.Type); err != nil {
+				return fmt.Errorf("enable %s: %w", ext.Name, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// configResolvedExtension mirrors config.ResolvedExtension without import cycle.
+type configResolvedExtension struct {
+	Name string
+	Type string
+}
+
+// getEnabledType reads the conf.d file to determine the extension type.
+func (m *ExtensionManager) getEnabledType(name string) string {
+	path := filepath.Join(m.RuntimeDir, "conf.d", fmt.Sprintf("20-%s.ini", name))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "extension"
+	}
+	if strings.HasPrefix(string(data), "zend_extension") {
+		return "zend_extension"
+	}
+	return "extension"
 }
 
 // ExtensionProfile is a predefined set of extensions.

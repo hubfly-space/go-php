@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 )
@@ -27,8 +28,8 @@ const (
 
 // Config holds FPM pool configuration.
 type Config struct {
-	PHPBinary      string // Path to php-fpm binary
-	SocketPath     string // Unix socket path
+	PHPBinary      string       // Path to php-fpm binary
+	SocketPath     string       // Unix socket path
 	PIDFile        string
 	MaxChildren    int
 	StartServers   int
@@ -39,6 +40,21 @@ type Config struct {
 	ErrorLog       string
 	User           string
 	Group          string
+	RuntimeDir     string       // Path to the runtime directory (for conf.d/)
+	Extensions     []Extension  // Enabled extensions
+	PhpIni         []IniSetting // Custom php.ini directives
+}
+
+// Extension represents a resolved PHP extension.
+type Extension struct {
+	Name string
+	Type string // "extension" or "zend_extension"
+}
+
+// IniSetting represents a php.ini directive.
+type IniSetting struct {
+	Name  string
+	Value string
 }
 
 // Supervisor manages a PHP-FPM process.
@@ -92,6 +108,15 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	s.cancel = cancel
 
 	cmd := exec.CommandContext(ctx, s.cfg.PHPBinary, "--fpm-config", configPath)
+
+	// Set PHP_INI_SCAN_DIR to include runtime's conf.d directory.
+	if s.cfg.RuntimeDir != "" {
+		confDir := filepath.Join(s.cfg.RuntimeDir, "conf.d")
+		if info, err := os.Stat(confDir); err == nil && info.IsDir() {
+			cmd.Env = append(os.Environ(), "PHP_INI_SCAN_DIR="+confDir)
+		}
+	}
+
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	s.cmd = cmd
@@ -223,7 +248,8 @@ func (s *Supervisor) generateConfig() (string, error) {
 		maxRequests = 500
 	}
 
-	content := fmt.Sprintf(`[global]
+	var b []byte
+	b = append(b, fmt.Sprintf(`[global]
 pid = %s
 error_log = %s
 daemonize = no
@@ -256,9 +282,31 @@ security.limit_extensions = .php
 		maxSpare,
 		maxRequests,
 		int(s.cfg.RequestTimeout.Seconds()),
-	)
+	)...)
 
-	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+	// Add custom php.ini directives as php_admin_value.
+	seen := make(map[string]bool)
+	for _, ini := range s.cfg.PhpIni {
+		if ini.Name == "" || seen[ini.Name] {
+			continue
+		}
+		seen[ini.Name] = true
+		b = append(b, fmt.Sprintf("php_admin_value[%s] = %s\n", ini.Name, ini.Value)...)
+	}
+
+	if s.cfg.Extensions != nil && len(s.cfg.Extensions) > 0 {
+		b = append(b, "\n; Extension INI files are loaded from PHP_INI_SCAN_DIR/conf.d/\n"...)
+		extNames := make([]string, 0, len(s.cfg.Extensions))
+		for _, ext := range s.cfg.Extensions {
+			extNames = append(extNames, ext.Name)
+		}
+		sort.Strings(extNames)
+		for _, name := range extNames {
+			b = append(b, fmt.Sprintf("; Extension: %s\n", name)...)
+		}
+	}
+
+	if err := os.WriteFile(cfgPath, b, 0o644); err != nil {
 		return "", err
 	}
 

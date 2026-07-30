@@ -6,12 +6,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
+	goruntime "runtime"
 	"strings"
 	"sync/atomic"
 	"time"
 
-	"github.com/go-php/gateway/internal/buildinfo"
+	"github.com/go-php/gateway/internal/runtime"
 	"github.com/go-php/gateway/internal/config"
 	"github.com/go-php/gateway/internal/deploy"
 	"github.com/go-php/gateway/internal/diagnostics"
@@ -38,7 +38,7 @@ type StatusProvider struct {
 
 // Goroutines returns the current goroutine count.
 func (sp *StatusProvider) Goroutines() int {
-	return runtime.NumGoroutine()
+	return goruntime.NumGoroutine()
 }
 
 // Uptime returns server uptime.
@@ -286,6 +286,12 @@ func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSiteByID(w http.ResponseWriter, r *http.Request) {
+	// Check if this is an extensions sub-resource.
+	if strings.HasSuffix(r.URL.Path, "/extensions") {
+		s.handleExtensionsSite(w, r)
+		return
+	}
+
 	id := r.URL.Path[len("/api/sites/"):]
 	if id == "" {
 		jsonErr(w, "site ID required", http.StatusBadRequest)
@@ -492,6 +498,141 @@ func (s *Server) handleConfigSave(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, map[string]string{"status": "saved"})
 }
 
+func (s *Server) handleExtensions(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		// Return list of available extensions and current enabled set.
+		profiles := runtime.BuiltInProfiles()
+		profileList := make([]map[string]any, 0, len(profiles))
+		for _, p := range profiles {
+			profileList = append(profileList, map[string]any{
+				"name":        p.Name,
+				"description": p.Description,
+				"count":       len(p.Extensions),
+			})
+		}
+
+		jsonResp(w, map[string]any{
+			"profiles":  profileList,
+			"extensions": []string{},
+		})
+
+	case http.MethodPost:
+		var req struct {
+			Action string `json:"action"` // "enable" or "disable"
+			Name   string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonErr(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if req.Name == "" {
+			jsonErr(w, "extension name is required", http.StatusBadRequest)
+			return
+		}
+
+		s.logBuffer.Add(LogEntry{
+			Timestamp: time.Now(),
+			Level:     "info",
+			Message:   fmt.Sprintf("extension %s: %s", req.Action, req.Name),
+		})
+
+		jsonResp(w, map[string]string{"status": "ok", "extension": req.Name, "action": req.Action})
+
+	default:
+		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	profiles := runtime.BuiltInProfiles()
+	result := make([]map[string]any, 0, len(profiles))
+	for _, p := range profiles {
+		result = append(result, map[string]any{
+			"name":        p.Name,
+			"description": p.Description,
+			"extensions":  p.Extensions,
+		})
+	}
+
+	jsonResp(w, map[string]any{"profiles": result})
+}
+
+func (s *Server) handleExtensionsSite(w http.ResponseWriter, r *http.Request) {
+	// Extract site ID from path: /api/sites/{id}/extensions
+	prefix := "/api/sites/"
+	suffix := "/extensions"
+	path := r.URL.Path
+	if len(path) <= len(prefix)+len(suffix) {
+		jsonErr(w, "site ID required", http.StatusBadRequest)
+		return
+	}
+	id := path[len(prefix) : len(path)-len(suffix)]
+	if id == "" {
+		jsonErr(w, "site ID required", http.StatusBadRequest)
+		return
+	}
+
+	sites := s.status.Sites.Load()
+	if sites == nil {
+		jsonErr(w, "site not found", http.StatusNotFound)
+		return
+	}
+
+	idx := -1
+	for i, site := range *sites {
+		if site.ID == id {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		jsonErr(w, "site not found", http.StatusNotFound)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		jsonResp(w, map[string]any{
+			"site_id":    id,
+			"extensions": (*sites)[idx].Extensions,
+			"profile":    (*sites)[idx].Profile,
+		})
+
+	case http.MethodPut:
+		var req struct {
+			Extensions []string `json:"extensions"`
+			Profile    string   `json:"profile"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonErr(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		newSites := make([]SiteConfig, len(*sites))
+		copy(newSites, *sites)
+		newSites[idx].Extensions = req.Extensions
+		newSites[idx].Profile = req.Profile
+		newSites[idx].UpdatedAt = time.Now()
+		s.status.Sites.Store(&newSites)
+
+		jsonResp(w, map[string]any{
+			"status":     "ok",
+			"site_id":    id,
+			"extensions": req.Extensions,
+			"profile":    req.Profile,
+		})
+
+	default:
+		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
 func (s *Server) handleRuntimes(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -545,20 +686,20 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
+	var m goruntime.MemStats
+	goruntime.ReadMemStats(&m)
 
 	hostname, _ := os.Hostname()
 
 	jsonResp(w, SystemInfo{
 		Hostname:   hostname,
-		OS:         runtime.GOOS,
-		Arch:       runtime.GOARCH,
-		GoVersion:  buildinfo.Get().GoVersion,
-		Goroutines: runtime.NumGoroutine(),
+		OS:         goruntime.GOOS,
+		Arch:       goruntime.GOARCH,
+		GoVersion:  goruntime.Version(),
+		Goroutines: goruntime.NumGoroutine(),
 		MemAllocMB: float64(m.Alloc) / 1024 / 1024,
 		MemSysMB:   float64(m.Sys) / 1024 / 1024,
-		NumCPU:     runtime.NumCPU(),
+		NumCPU:     goruntime.NumCPU(),
 		PID:        os.Getpid(),
 	})
 }
