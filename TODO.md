@@ -262,31 +262,29 @@
 - [ ] Separate PHP pools per project
 
 ### HTTPS / TLS
-> **The whole of `internal/tls` is unwired.** `main.go` only ever calls `ListenAndServe`, so the
-> gateway cannot serve HTTPS at all. Every `[x]` in this section is library code with no listener.
-- [x] Static certificate files — `CertManager.LoadCert()`, `LoadCertDir()` `[unwired]`
+> `internal/tls` is now wired: `tls.mode: files` starts an HTTPS listener with SNI, and Go
+> negotiates HTTP/2 over it. `tls.mode: acme` is rejected at config load until real ACME lands.
+- [x] Static certificate files — `CertManager.LoadCert()`, `LoadCertDir()`, wired via `tls.mode: files`
 - [ ] Automatic ACME (Let's Encrypt) — **`acme.go:48` never contacts an ACME server**; it calls `generateSelfSigned` and returns that under a Let's Encrypt-shaped API. Needs a real implementation (e.g. `x/crypto/acme/autocert`) before the mode is offered
 - [ ] Fix `acme.go:235` — slices `r.URL.Path[len(prefix):]` with no prefix check; a short request panics the server
 - [ ] Atomic certificate renewal — plus §30.2 renewal jitter, persistent cert state, rate-limit-aware retry, concurrent renewal
-- [x] Secure private key permissions — loaded via `tls.LoadX509KeyPair` `[unwired]`
-- [x] SNI routing — `CertManager.GetCertificate()` with wildcard matching `[unwired]`
-- [x] HTTP-to-HTTPS redirect — `RedirectHandler()` with 301 `[unwired]`
+- [x] Secure private key permissions — loaded via `tls.LoadX509KeyPair`
+- [x] SNI routing — `CertManager.GetCertificate()` with wildcard matching
+- [x] HTTP-to-HTTPS redirect — `RedirectHandler()` with 301, via `tls.redirect_from`
 - [x] Unit tests: SNI selection, wildcard match, default cert, load dir, redirect handler
 
 ### Admin API
-> **`internal/admin` has zero importers.** The API that actually runs is `internal/ui`, which has no
-> auth, no CSRF, no origin check, and no security headers — and can start listeners on arbitrary
-> ports serving arbitrary directories with PHP enabled. This is the most severe open item in the
-> repo; see the security section of [ROADMAP.md](ROADMAP.md).
-- [x] Bind to `127.0.0.1` only by default — `DefaultAdminConfig().Addr = "127.0.0.1:9090"` `[unwired]`
-- [x] Local token authentication (constant-time comparison) — `crypto/subtle.ConstantTimeCompare` `[unwired]`
-- [ ] Make auth fail-closed — `api.go:85-87` returns `true` when no token is configured
-- [ ] CSRF protection — `internal/admin/csrf.go` exists but **hand-rolls SHA-256** (its own comment says "placeholder"), encodes the length suffix in bytes rather than bits, and `Validate`/`Consume` never verify the MAC. Replace with `crypto/hmac` + `crypto/sha256` **before** wiring
-- [x] Rate limit authentication attempts — per-IP token bucket `[unwired]`
-- [x] Endpoints: status, config validate, runtimes, metrics, audit, health `[unwired]` — note `handleConfigValidate` is a stub returning `{"status":"valid"}`
+> `internal/admin.Guard` now protects the `internal/ui` mux: bearer token, origin validation, rate
+> limiting, audit log, and security headers. A token is generated at startup and printed to stderr.
+- [x] Bind to `127.0.0.1` only by default — plus a warning when `--ui-addr` is not loopback
+- [x] Local token authentication (constant-time comparison) — `crypto/subtle.ConstantTimeCompare`
+- [x] Make auth fail-closed — an unset token now denies rather than allowing
+- [x] CSRF protection — hand-rolled SHA-256/HMAC replaced with `crypto/hmac` + `crypto/sha256`, and the MAC is now actually verified; browser flow uses an `HttpOnly`, `SameSite=Strict` cookie plus origin validation
+- [x] Rate limit authentication attempts — per-IP token bucket
+- [x] Endpoints: status, config validate, runtimes, metrics, audit, health — note `handleConfigValidate` is still a stub returning `{"status":"valid"}`
 - [ ] Long-running operation IDs — plus §36.4 SSE progress streaming
-- [ ] §36.3 separate read and write scopes, token rotation, short-lived operation tokens
-- [x] Audit log all operations — `AuditLog` with timestamp, action, remote, path `[unwired]`
+- [ ] §36.3 separate read and write scopes, token rotation, short-lived operation tokens — one token currently grants full control
+- [x] Audit log all operations — `AuditLog` with timestamp, action, remote, path
 
 ### Service Mode
 - [ ] `gateway start`, `gateway stop`, `gateway reload`, `gateway status`
@@ -294,9 +292,9 @@
 - [x] Graceful shutdown sequence — wired in `cmd/gateway/main.go` via SIGINT/SIGTERM
 
 ### Configuration Reload
-> **`internal/config/reload.go` has no consumer.** There is no SIGHUP handler and no file watcher, so
-> config cannot be reloaded at all; `gatewayHandler` captures `cfg` once at startup.
-- [ ] Add a SIGHUP handler and read config through the snapshot rather than a captured pointer
+> Wired: SIGHUP reloads, validates, and atomically swaps. The handler reads an immutable
+> `serveState` snapshot once per request, so a reload cannot change the rules mid-request.
+- [x] Add a SIGHUP handler and read config through the snapshot rather than a captured pointer
 - [x] Validate new config before activation — `Reloader.Reload()` calls `Validate()` `[unwired]`
 - [x] Build candidate snapshot — `Snapshot` struct with version and timestamp `[unwired]`
 - [x] Atomic pointer swap — `atomic.Pointer[Snapshot]` in `internal/config/reload.go` `[unwired]`
@@ -305,11 +303,11 @@
 
 ### Observability (Production)
 - [x] Structured access logs with all fields — `internal/observability/access.go` (the only observability file that is wired)
-- [ ] Wire secret redaction — `SecretRedactor` exists and nothing installs it, so **the access log is currently unredacted**
-- [x] Prometheus metrics (§32.3) — `internal/observability/metrics.go` `[unwired]` — **no `/metrics` endpoint is served**
-- [ ] Fix metrics before exposing: `:51` keys histograms by raw request path (unbounded cardinality, forbidden by §32.3) and `:132` emits the path as an unescaped label, so `/a"}x{y="` corrupts the exposition format
-- [x] OpenTelemetry tracing (§32.4) — `internal/observability/tracing.go` `[unwired]`
-- [ ] Schedule `Tracer.Cleanup` before wiring — `tracing.go:44` is an unbounded `map[TraceID][]*Span`
+- [x] Wire secret redaction — installed as the default slog handler before anything logs, driven by `observability.redact_keys`
+- [x] Prometheus metrics (§32.3) — served at `observability.metrics.path` on the management listener only (§5.5)
+- [x] Fix metrics before exposing — series are keyed on the matched route pattern with a hard cap and an overflow bucket, label values are escaped, and HELP/TYPE are emitted once per family
+- [x] Request tracing (§32.4) — behind `observability.tracing.enabled`
+- [x] Schedule `Tracer.Cleanup` before wiring — `Tracer.StartCleanup` runs on a ticker bounded by `observability.tracing.retention`
 - [ ] §32.4 propagate trace context into PHP via controlled env vars/headers
 - [x] `gateway doctor` diagnostics — `internal/diagnostics/doctor.go` (binary checks, port availability, PID limit, open files, disk space)
 - [ ] `gateway status --verbose`
@@ -319,16 +317,17 @@
 
 ### Resource Limits
 - [ ] Request header limits
-- [ ] Request body limits — `security.max_body_size` is a `string` field nothing ever parses; `servePHP` hardcodes 20 MiB (`main.go:475`)
+- [x] Request body limits — `security.max_body_size` is parsed at config load by `ParseByteSize` and enforced in the request path, returning 413
 - [ ] Multipart limits — and the whole of §25 upload security
 - [ ] Concurrency limits (per-project, per-PHP, per-client)
 - [ ] Queue limits with backpressure — §24.2 bounded queue, 503/429 with `Retry-After`, health-route prioritization
-- [x] Timeout configuration — `ServerConfig.WriteTimeout`, `PHPConfig.RequestTimeout` — but `RequestTimeout` only reaches the generated FPM conf; the Go side hardcodes 60s (`main.go:478`)
+- [x] Timeout configuration — `php.request_timeout` now bounds the Go-side PHP request as well as the generated FPM conf
 
 ### Rate Limiting
-> **Nothing constructs a rate limiter at runtime.** `internal/policy` is imported only by
-> `diagnostics/explain.go`, which builds an *empty* engine — so the explain trace always says "allow".
-- [ ] Wire `PerRouteLimiter.Middleware` into the request chain and schedule `Cleanup` on a ticker
+> Wired behind `security.rate_limit`. Two bypasses were fixed on the way in: the limiter keyed on
+> the client-controlled `X-Forwarded-For` header, and otherwise on `RemoteAddr` including the port,
+> so every new connection got a fresh bucket.
+- [x] Wire `PerRouteLimiter.Middleware` into the request chain and schedule `Cleanup` on a ticker
 - [x] Token bucket per client — `RateLimiter` in `internal/policy/ratelimit.go` `[unwired]`
 - [x] Per route — `PerRouteLimiter.SetRoute()` `[unwired]`
 - [x] Global emergency limit — `PerRouteLimiter` with global bucket `[unwired]`
@@ -356,7 +355,7 @@
 - [x] Blue/green pool model — `Switcher.Deploy()` creates, probes, activates, drains
 - [x] Install candidate → generate config → start → probe → activate → drain old
 - [x] Atomic routing via snapshot swap — symlink swap in `ReleaseManager.Activate()`
-- [ ] Health checks: PHP version, extensions, FastCGI, application /health — **`Prober.Probe()` (`switcher.go:161`) always returns `true`**; the gate cannot fail, and it does not verify the release structure either
+- [~] Health checks — `Prober.Probe` no longer returns `true` unconditionally: it verifies the release directory and entrypoint and can request a health URL. Full candidate verification (start a candidate pool, check PHP version and extensions, warm-up URLs) still needs the supervisor
 - [x] Rollback on failure — `Switcher.Rollback()`, `ReleaseManager.Rollback()` `[unwired]`
 - [ ] Fix `ReleaseManager.Rollback` locking (`release.go:221-225` unlocks mid-function under a deferred unlock)
 - [x] Canary switching (optional, advanced) — `internal/deploy/canary.go` `[unwired]`
@@ -389,9 +388,9 @@
 > Goal: WAF, OS isolation, network policy, incident snapshots.
 
 ### WAF / Policy Engine
-> **`Engine.Middleware` is never installed.** The request chain is a single middleware
-> (`observability.Middleware`), so no rule in this section is evaluated at runtime.
-- [ ] Wire `Engine.Middleware` and add a `security.mode` config key (off | observe | balanced | strict). §23.4: structural protections must remain even at `off`
+> Wired behind `security.mode`. Denials name the rule that produced them (§23.3), and observe mode
+> logs without blocking. Structural protections are unaffected by the mode, per §23.4.
+- [x] Wire `Engine.Middleware` and add a `security.mode` config key (off | observe | balanced | strict)
 - [ ] Fix `CondQueryParam` — `engine.go:237` does `strings.Contains` on the raw query rather than matching a parsed param; `CondBodySize` (`:246`) ignores `Sscanf` errors; `matchesCondition` (`:203`) recompiles regexes per evaluation
 - [x] Policy engine interface and phases (§26.2) — `internal/policy/engine.go` with `Phase`, `Decision`, `Engine` `[unwired]`
 - [x] Method allow/deny rules — `CondMethod` condition type
@@ -406,10 +405,9 @@
 - [x] Unit tests (15 tests): allow, deny, observe, path regex, host match, exclusion, negation, IP range, body size, priority, clear, middleware, scheme match, rules copy
 
 ### OS-Level Isolation
-> **`ApplyIsolation` is called from nowhere.** `Supervisor.Start` builds its `exec.Cmd` at
-> `supervisor.go:110` with no `SysProcAttr` at all, so the documented isolation tiers ship as
-> unreachable code. §28.1 forbids claiming safe untrusted multi-tenancy regardless.
-- [ ] Call `Isolator.ApplyIsolation(cmd)` before starting php-fpm, driven by a `php.isolation` config block defaulting to Tier 0
+> Wired via `php.isolation`, defaulting to Tier 0 (none). §28.1 still forbids claiming safe
+> untrusted multi-tenancy at these tiers, and the README says so.
+- [x] Call `Isolator.ApplyIsolation(cmd)` before starting php-fpm, driven by a `php.isolation` config block defaulting to Tier 0
 - [x] Tier definitions (dev, single-user, multi-project, multi-tenant) — `IsolationConfig` with mode: none, process, namespace, cgroup `[unwired]`
 - [x] Linux controls: cgroup v2, namespaces, seccomp, AppArmor/SELinux — `internal/supervisor/isolation.go` `[unwired]`
 - [x] Resource config: memory, CPU, PIDs, open files — MemoryLimit, CPULimit, PIDLimit in IsolationConfig
@@ -444,7 +442,7 @@
 - [x] `internal/diagnostics/explain.go` — `RequestExplainer.Explain()` traces request through full pipeline
 - [x] Shows: path normalization, policy decision, route match, file resolution, script resolution
 - [x] Structured JSON output with summary and duration
-- [ ] Give `explain` a real router and policy engine — `commands.go:128` passes `nil` for both, so the route and policy steps of the trace are always empty. The "nil-safe" fallback at `explain.go:34-39` builds an *empty* engine, which is why the policy step always reports `allow`. §33.1 is the flagship differentiator; it is currently half-blind
+- [x] Give `explain` a real router and policy engine — it now loads the config, builds the same router and mode-appropriate engine `serve` would, and accepts `--config`, `--method`, `--host`, and `--root`
 
 ### Compatibility Doctor
 - [x] `internal/diagnostics/compat.go` — `CompatDoctor.Scan()` full project compatibility scan
@@ -454,9 +452,9 @@
 - [x] Suggestions for migration and fixes
 
 ### Route Contract Tests
-> No CLI command surfaces this. Same for the shadow tester and the htaccess translator below — three
-> finished, well-tested libraries with no way to run them.
-- [ ] Add `gateway test routes`, `gateway shadow`, and `gateway migrate htaccess`
+> All three now have CLI surfaces. `gateway test routes` exits non-zero on failure so it is usable
+> in CI.
+- [x] Add `gateway test routes`, `gateway shadow`, and `gateway migrate htaccess`
 - [x] `internal/diagnostics/contract.go` — `ContractTestSuite` with declarative test definitions `[unwired]`
 - [x] Match expectations: route target, redirect URL, denied
 - [x] Host, method, and header matching
@@ -525,7 +523,7 @@
 > release workflow, and no tag trigger. `build-all` covers linux/amd64 and darwin/amd64+arm64 — no
 > linux/arm64, no Windows — and CI is `ubuntu-latest` only, so the darwin targets are never verified.
 - [ ] Standalone Go binary
-- [ ] Fix `Makefile:12` ldflags — they set `-X main.version=…` but the variables live in `internal/buildinfo`, so the linker silently drops them and `gateway version` always prints `dev`
+- [x] Fix `Makefile` ldflags — they now name `internal/buildinfo`, and `GoVersion` comes from `runtime.Version()`
 - [ ] Add `govulncheck`, `gosec`/CodeQL, dependabot, a dashboard lint/build job, and a multi-PHP-version e2e matrix (currently pinned to 8.3)
 - [ ] Clean stale bundles on `dashboard-embed` — `cp -r` never removes, so ~690 KB of orphaned JS/CSS is compiled into the binary
 - [ ] Debian/RPM packages
@@ -539,6 +537,16 @@
 - [ ] PR pipeline: format → lint → vet → static analysis → unit tests → race tests → fuzz smoke → integration → build → config validation → docs check
 - [ ] Scheduled pipeline: long fuzzing, security regression, framework compat, load tests, dependency scan
 - [ ] Release pipeline: reproducible build, SBOM, checksums, signed artifacts, upgrade tests, rollback tests
+
+### Landed alongside the wiring work
+- [x] Watchdog for php-fpm — health check on a ticker, exponential backoff with jitter, max restart rate, circuit-open state, stable 503 for PHP routes while open (§16.5)
+- [x] Fix php-fpm being killed 10s after every start — `Supervisor.Start` tied the child's lifetime to the caller's startup-timeout context
+- [x] Graceful php-fpm shutdown — SIGTERM first, SIGKILL only on timeout, so workers are not orphaned (§16.6)
+- [x] Fix flag parsing — `gateway serve . --php-fpm <path>` silently ignored every flag after the positional argument
+- [x] Static `Cache-Control` with immutable-asset paths, and precompressed `.br`/`.gz` variants resolved through the hardened resolver (§12.1)
+- [x] Route `internal/ui/siteManager.go` through `filesystem.Resolver` — it had no protected-pattern check, so `.env` under a site webroot was served
+- [x] Bound the rate limiter's client-key map (§24.3)
+- [x] `ParseByteSize` for `security.max_body_size` and `php.isolation.memory_limit`
 
 ### Housekeeping
 - [ ] Adopt or delete `internal/php/fpm` — 203 lines at 85.3% coverage, zero importers, and `supervisor.generateConfig` (`supervisor.go:255-350`) re-implements a worse version inline. Adopting is the recommendation

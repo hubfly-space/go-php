@@ -16,22 +16,36 @@ PHP) run without application changes.
 
 ## What works today
 
-- **PHP via FastCGI** — the gateway generates an FPM pool config, spawns and stops `php-fpm`, and
-  proxies requests over a private Unix socket
+- **PHP via FastCGI** — the gateway generates an FPM pool config, spawns `php-fpm`, health-checks it
+  on an interval, and restarts it with exponential backoff and a circuit breaker when it dies
+- **HTTPS** — SNI certificate selection with wildcard support, TLS 1.2 minimum, HTTP/2, and an
+  optional HTTP→HTTPS redirect listener
 - **Hardened path handling** — single-pass percent-decoding, rejection of NUL/control characters,
   backslashes, encoded slashes and double-encoding; RFC 3986 dot-segment collapsing; Lstat-first
   symlink detection with `deny` / `within_root` modes; a default protected-file deny list
+- **Security policy** — a rule engine with `off` / `observe` / `balanced` / `strict` modes and
+  explainable, rule-attributed denials; per-client token-bucket rate limiting with bounded state
+- **Request limits** — configured body-size and PHP execution timeouts enforced in the request path
+- **Observability** — structured access logs with secret redaction, Prometheus metrics with bounded
+  label cardinality, and optional request tracing
 - **Routing** — exact path, prefix, regex, host, method, and header matchers with rewrites and
   redirects
+- **Config reload** — `SIGHUP` validates and atomically swaps configuration; an invalid file is
+  rejected and the running configuration is kept
 - **Extension management** — profiles (`minimal`, `web-standard`, `wordpress`, `laravel`,
   `development`) or an explicit list, with per-route overrides and `php.ini` settings
 - **Framework detection** — Laravel, Symfony, WordPress, and Composer projects, with an automatic
   pivot to `public/`
-- **Static serving** — MIME detection, ETag, conditional requests
+- **Static serving** — MIME detection, ETag, conditional requests, `Cache-Control` policy with
+  immutable-asset paths, and precompressed `.br` / `.gz` variants
+- **OS isolation** — optional cgroup, namespace, and credential isolation for the php-fpm process
+  (see the caveat under [Security model](#security-model))
 - **Diagnostics** — `doctor` (system readiness), `compat` (framework and `.htaccess` scan with a
-  0–100 score), `explain` (request decision trace), `incident capture` (redacted snapshot bundle)
+  0–100 score), `explain` (request decision trace), `migrate htaccess` (Apache rewrite translation),
+  `test routes` (route contract tests), `shadow` (runtime A/B comparison), `incident capture`
 - **Releases** — immutable release directories with atomic symlink activation and rollback
-- **Management UI** — an embedded React dashboard on a separate loopback listener
+- **Management UI** — an embedded React dashboard on a separate loopback listener, behind bearer
+  token authentication
 
 ## Quick start
 
@@ -70,9 +84,24 @@ explain     Trace a request through the decision pipeline
 config      Manage configuration (validate, init)
 deploy      Manage releases and deployments (create, activate, rollback, list)
 php         Manage PHP runtimes (list, install, use, remove)
+migrate     Translate Apache config to gateway routes (htaccess)
+test        Run route contract tests (routes)
+shadow      Compare an active runtime against a candidate
 incident    Capture diagnostic incident snapshot
 service     Install systemd service unit
 version     Show build and version metadata
+```
+
+Translate an `.htaccess` into a routes block you can paste into `gateway.yaml`:
+
+```bash
+gateway migrate htaccess ./public
+```
+
+Check routing behavior in CI — the command exits non-zero if any contract fails:
+
+```bash
+gateway test routes --config gateway.yaml
 ```
 
 Note: `gateway php install` is currently a stub — it registers a manifest for an empty directory
@@ -121,9 +150,43 @@ logging:
 
 security:
   symlink_mode: within_root    # deny | within_root
-  max_body_size: 20MB
+  max_body_size: 20MB          # enforced before the request reaches PHP
+  mode: balanced               # off | observe | balanced | strict
+  rate_limit:
+    enabled: false
+    requests_per_minute: 600
+    burst: 100
   protected_patterns: [.env, .git, "*.sql", composer.json, gateway.yaml]
+
+tls:
+  mode: disabled               # disabled | files   ("acme" is rejected — see below)
+  cert_file: /etc/ssl/cert.pem
+  key_file: /etc/ssl/key.pem
+  cert_dir: /etc/ssl/gateway   # optional, scanned for per-host SNI certificates
+  redirect_from: ":80"         # optional HTTP→HTTPS redirect listener
+
+static:
+  max_age: 1h                  # 0 disables Cache-Control
+  immutable_paths: ["/assets/", "/static/"]
+  no_cache_paths: []
+  precompressed: true          # serve a sibling .br or .gz when accepted
+
+observability:
+  metrics:
+    enabled: true              # served on the management listener, not the app port
+    path: /metrics
+  tracing:
+    enabled: false
+    retention: 5m
+  redact_keys: [authorization, cookie, set-cookie, password, token]
 ```
+
+`security.mode` governs policy *rules* only. Structural protections — path canonicalization, script
+mapping, the filesystem boundary — are never disabled by it, including at `off`.
+
+Sending `SIGHUP` reloads the file. Routes, protected patterns, symlink mode, body limits, and cache
+policy take effect immediately; the listen address, TLS settings, php-fpm binary, security mode, and
+rate limits require a restart, and the gateway logs which of those changed.
 
 ## Architecture
 
@@ -160,33 +223,40 @@ the running binary never reaches. Details and file references are in [ROADMAP.md
 
 | Area | Status |
 |---|---|
-| HTTPS / TLS | `internal/tls.CertManager` is complete but unwired — `main.go` only calls `ListenAndServe`. **The gateway cannot serve HTTPS.** The ACME path is a stub that returns self-signed certs. |
-| WAF and rate limiting | `internal/policy` is complete and tested; nothing constructs it at runtime |
-| Prometheus metrics | `PrometheusHandler` exists; no `/metrics` endpoint is served |
-| Tracing | `TraceMiddleware` exists and is unwired (and needs a cleanup ticker before it is) |
-| Secret redaction in logs | `SecretRedactor` exists; the access log is currently **unredacted** |
-| Config reload | `config.Reloader` exists; there is no SIGHUP handler or file watcher |
-| php-fpm supervision | started once, never health-checked or restarted; `HealthCheck` is called from nowhere |
-| OS isolation tiers | `supervisor/isolation.go` implements cgroups/namespaces/credentials and is referenced by nothing |
-| Management API auth | **the management API has no authentication, CSRF, or origin checking** — see below |
+| Automatic TLS (ACME) | **Not implemented.** `tls.mode: acme` is rejected at config load, because the ACME code never contacts a CA — it would serve a self-signed certificate under a Let's Encrypt-shaped API. Use `tls.mode: files`. |
 | Connection pooling | one Unix socket dial per PHP request; no reuse |
-| Response streaming | PHP responses are fully buffered before the first byte is sent; SSE and large downloads don't work |
-| HTTP/2, reverse proxy, WebSockets | not implemented; `internal/proxy/` is empty |
-| Upload pipeline, trusted proxies, request framing hardening | not implemented |
+| Response streaming | PHP responses are fully buffered before the first byte is sent, so SSE and very large downloads don't work |
+| Request abort | a timed-out PHP request does not send `FCGI_ABORT_REQUEST`; the backend keeps working on it |
+| Reverse proxy, WebSocket proxying | not implemented; `internal/proxy/` is empty |
+| Upload pipeline (§25) | not implemented — no multipart limits or executable-path policy |
+| Trusted proxies (§10.3) | not implemented; `X-Forwarded-For` is deliberately **not** trusted anywhere |
+| Request framing hardening (§10.4) | not implemented |
+| Concurrency limits and backpressure (§24) | not implemented |
 | State store | `internal/state/` is specified in §7 and does not exist |
 | Windows backend | not implemented; `internal/platform/*` are empty |
+| Per-route PHP runtime, deployment replay | not implemented |
+| Deploy pipeline | `ReleaseManager` is wired; `Switcher` and `CanarySwitcher` are not |
+| Public SDK | `pkg/{configapi,policyapi,pluginapi}` are empty |
 | Packaging | `packaging/` and `scripts/` are empty — no Docker image, deb/rpm, Homebrew, or release workflow |
 
-### Security notice
+### Management API
 
-The management UI listener (default `127.0.0.1:30200`) currently has **no authentication**. Among
-other things, an unauthenticated `POST /api/sites` can start a listener on an arbitrary port serving
-an arbitrary directory with PHP execution enabled, and the log WebSocket accepts any origin. Until
-this is fixed:
+The management listener (default `127.0.0.1:30200`) requires a bearer token. One is generated at
+startup and printed to stderr along with a dashboard URL:
 
-- do not pass `--ui-addr` a non-loopback address
-- do not run the gateway on a host where untrusted local users have network access to loopback
-- consider `--ui-addr ""` to disable the management listener entirely
+```
+Management dashboard: http://127.0.0.1:30200/?token=<token>
+Management API token: <token>
+```
+
+Loading that URL sets an `HttpOnly`, `SameSite=Strict` session cookie, so the token does not stay in
+the address bar and page JavaScript never holds it. API clients send `Authorization: Bearer <token>`.
+Cross-origin requests are refused even with a valid token, and the log WebSocket enforces the same
+origin check.
+
+This matters because the management API can create directories, start listeners on arbitrary ports
+with PHP execution enabled, and activate releases. Binding it to a non-loopback address exposes all
+of that — the gateway logs a warning if you do. Pass `--ui-addr ""` to disable it entirely.
 
 ## Testing
 
@@ -212,13 +282,27 @@ Implemented today:
 - dot-segment collapsing with URL semantics, before any filesystem mapping
 - Lstat-first symlink detection with `deny` and `within_root` modes
 - regular-file verification; device, socket, and pipe files rejected
-- a protected-file deny list (`.env`, `.git`, `composer.json`, `*.sql`, `*.log`, …)
+- a protected-file deny list (`.env`, `.git`, `composer.json`, `*.sql`, `*.log`, …), applied to both
+  the main gateway and UI-managed sites
 - the client cannot supply `SCRIPT_FILENAME`
 - CGI response header validation, with control-character and injection rejection
+- policy rules with observe-before-enforce, and denials attributed to a named rule
+- per-client rate limiting keyed on the transport peer address, with bounded state
+- bearer-token authentication, origin validation, audit logging, and security headers on the
+  management API
+- secret redaction in the access log
 - fuzz targets over the path parser, the CGI response parser, and the FastCGI record codec
 
-Not yet enforced: rate limiting, WAF rules, request/multipart limits, upload policy, CSRF, audit
-logging, and management API authentication. See the table above.
+Not yet enforced: multipart and upload policy (§25), concurrency limits and backpressure (§24),
+trusted-proxy handling (§10.3), and request framing hardening (§10.4). See the table above.
+
+Two honesty notes, per §28.1 and §26.1:
+
+- **Isolation.** `php.isolation` can apply cgroup, namespace, and credential restrictions, but this
+  does not make the gateway safe for untrusted multi-tenant workloads. That requires a container or
+  microVM boundary the gateway does not provide.
+- **Policy rules.** The rule engine is a risk-reduction layer, not a guarantee that applications are
+  secure.
 
 To report a vulnerability, please open a private security advisory rather than a public issue.
 

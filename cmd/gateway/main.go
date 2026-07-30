@@ -398,7 +398,8 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr str
 		sockPath: sockPath,
 		logger:   logger,
 	}
-	handler.state.Store(&serveState{cfg: cfg, resolver: resolver, router: routingEngine})
+	handler.state.Store(&serveState{cfg: cfg, resolver: resolver, router: routingEngine,
+		cachePolicy: buildCachePolicy(cfg)})
 
 	// The reloader owns the published config snapshot; the handler owns the
 	// derived request-path components. SIGHUP updates both together.
@@ -599,9 +600,24 @@ func buildRouter(cfg *config.Config) (*router.Engine, error) {
 // It is immutable once published; a reload builds a whole new one and swaps the
 // pointer, so an in-flight request keeps the state it started with (§39.1).
 type serveState struct {
-	cfg      *config.Config
-	resolver *filesystem.Resolver
-	router   *router.Engine
+	cfg         *config.Config
+	resolver    *filesystem.Resolver
+	router      *router.Engine
+	cachePolicy *filesystem.CachePolicy
+}
+
+// buildCachePolicy derives the static cache policy from config, or nil when
+// caching is disabled.
+func buildCachePolicy(cfg *config.Config) *filesystem.CachePolicy {
+	if cfg.Static.MaxAge <= 0 {
+		return nil
+	}
+	return &filesystem.CachePolicy{
+		DefaultMaxAge:  cfg.Static.MaxAge,
+		ImmutablePaths: cfg.Static.ImmutablePaths,
+		NoCachePaths:   cfg.Static.NoCachePaths,
+		ETag:           true,
+	}
 }
 
 type gatewayHandler struct {
@@ -672,7 +688,8 @@ func (h *gatewayHandler) reload(configPath string, reloader *config.Reloader) er
 	if err := reloader.Reload(newCfg); err != nil {
 		return err
 	}
-	h.state.Store(&serveState{cfg: newCfg, resolver: newResolver, router: newRouter})
+	h.state.Store(&serveState{cfg: newCfg, resolver: newResolver, router: newRouter,
+		cachePolicy: buildCachePolicy(newCfg)})
 
 	// Be explicit about what a reload does not cover, rather than letting an
 	// operator believe a change took effect when it did not.
@@ -748,7 +765,7 @@ func (h *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rf, err := st.resolver.Resolve(normalized)
 	if err == nil {
 		defer rf.Close()
-		h.serveStatic(w, r, st, rf, reqID, start)
+		h.serveStatic(w, r, st, rf, normalized, reqID, start)
 		return
 	}
 
@@ -768,7 +785,7 @@ func (h *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rf2, err := st.resolver.Resolve(indexPath)
 	if err == nil {
 		defer rf2.Close()
-		h.serveStatic(w, r, st, rf2, reqID, start)
+		h.serveStatic(w, r, st, rf2, indexPath, reqID, start)
 		return
 	}
 
@@ -792,7 +809,7 @@ func (h *gatewayHandler) phpUnavailable(w http.ResponseWriter, r *http.Request, 
 	h.devError(w, r, http.StatusServiceUnavailable, "Service Unavailable", reason, reqID, start)
 }
 
-func (h *gatewayHandler) serveStatic(w http.ResponseWriter, r *http.Request, st *serveState, rf *filesystem.ResolvedFile, reqID string, start time.Time) {
+func (h *gatewayHandler) serveStatic(w http.ResponseWriter, r *http.Request, st *serveState, rf *filesystem.ResolvedFile, urlPath, reqID string, start time.Time) {
 	if st.resolver.IsProtected(r.URL.Path) {
 		h.devError(w, r, 403, "Access Denied", "This file is protected.", reqID, start)
 		return
@@ -801,6 +818,12 @@ func (h *gatewayHandler) serveStatic(w http.ResponseWriter, r *http.Request, st 
 	ct := detectMIME(rf.RealPath)
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("X-Request-ID", reqID)
+
+	// Cache-Control. The gateway previously emitted none at all, so every
+	// static asset was revalidated on each request (§12.1).
+	if policy := st.cachePolicy; policy != nil {
+		w.Header().Set("Cache-Control", policy.CacheControl(urlPath))
+	}
 
 	etag := generateETag(rf.Info)
 	w.Header().Set("ETag", etag)
@@ -823,9 +846,50 @@ func (h *gatewayHandler) serveStatic(w http.ResponseWriter, r *http.Request, st 
 	}
 
 	w.Header().Set("Last-Modified", rf.Info.ModTime().UTC().Format(time.RFC1123))
+
+	// Serve a precompressed sibling when the client accepts it (§12.1). The
+	// variant is resolved through the same Resolver as the original, so it gets
+	// the identical symlink, protected-pattern, and boundary checks — the
+	// reason this is not delegated to filesystem.PrecompressedFileServer, which
+	// does its own path handling.
+	if st.cfg.Static.Precompressed {
+		if enc, variant := h.precompressedVariant(r, st, urlPath); variant != nil {
+			defer variant.Close()
+			w.Header().Set("Content-Encoding", enc)
+			w.Header().Add("Vary", "Accept-Encoding")
+			http.ServeContent(w, r, rf.Info.Name(), rf.Info.ModTime(), variant.F)
+			h.logger.Info("static", "request_id", reqID, "path", r.URL.Path,
+				"file", variant.RealPath, "encoding", enc,
+				"duration_ms", time.Since(start).Milliseconds())
+			return
+		}
+	}
+
 	http.ServeContent(w, r, rf.Info.Name(), rf.Info.ModTime(), rf.F)
 	h.logger.Info("static", "request_id", reqID, "path", r.URL.Path,
 		"file", rf.RealPath, "duration_ms", time.Since(start).Milliseconds())
+}
+
+// precompressedVariant returns an already-compressed sibling file the client
+// accepts, or nil. Brotli is preferred over gzip when both are acceptable.
+func (h *gatewayHandler) precompressedVariant(r *http.Request, st *serveState, urlPath string) (string, *filesystem.ResolvedFile) {
+	accept := r.Header.Get("Accept-Encoding")
+
+	for _, candidate := range []struct{ encoding, ext string }{
+		{"br", ".br"},
+		{"gzip", ".gz"},
+	} {
+		if !strings.Contains(accept, candidate.encoding) {
+			continue
+		}
+		variant, err := st.resolver.Resolve(urlPath + candidate.ext)
+		if err != nil {
+			continue
+		}
+		return candidate.encoding, variant
+	}
+
+	return "", nil
 }
 
 func (h *gatewayHandler) servePHP(w http.ResponseWriter, r *http.Request, st *serveState, normalized, reqID string, start time.Time) {

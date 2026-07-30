@@ -4,77 +4,60 @@ This document is a prioritized list of work for `go-php/gateway`, derived from a
 [the engineering spec](.material/go-php-gateway-complete-engineering-spec.md) against the code as it
 actually exists. Section references like §15.3 point at the spec.
 
-It is deliberately opinionated about ordering. The organizing observation is this:
+It is deliberately opinionated about ordering. The organizing observation, when this was written,
+was that **the codebase was substantially more complete than the running binary** — roughly a third
+of `internal/` was written, tested, and unreachable from `main`, and the best-covered packages in
+the repo were the ones with zero production importers. That made "wire what exists" the
+highest-leverage work available, ahead of writing anything new.
 
-> **The codebase is substantially more complete than the running binary.**
-> Roughly a third of `internal/` is written, tested, and unreachable from `main`.
-
-That makes "wire what exists" the highest-leverage category of work available, ahead of writing
-anything new. The best-covered packages in the repo are the ones with zero production importers:
-`internal/admin` at 90.4%, `internal/php/fpm` at 85.3%, `internal/tls` at 78.5% — while
-`cmd/gateway`, which holds the entire request path, has no tests at all.
+Most of that wiring is now done (see the first section). What remains is genuinely unbuilt, plus one
+persistent inversion worth naming: `cmd/gateway` holds the entire request path and still has no
+tests.
 
 ---
 
-## Now — wire the dead subsystems
+## Done — the dead subsystems are wired
 
-Verified dead (zero non-test importers) at the time of writing:
+This section is kept because it explains the shape of the codebase. Everything listed here has
+since been connected to the running binary; see the git history for the changes.
 
-| Package / file | Coverage | What it does | Consequence of it being unwired |
-|---|---|---|---|
-| `internal/admin` | 90.4% | token auth, CSRF, audit log, rate limit | the *insecure* `internal/ui` runs instead |
-| `internal/tls` | 78.5% | `CertManager`, SNI, wildcard, default cert | **the gateway cannot serve HTTPS at all** |
-| `internal/policy` | 80.7% | WAF engine, token-bucket + per-route limiter | no WAF, no rate limiting |
-| `internal/php/fpm` | 85.3% | pool config layering, directive classification | `supervisor.generateConfig` re-implements it worse, inline |
-| `observability/metrics.go` | — | `Metrics`, `PrometheusHandler` | no `/metrics` endpoint exists |
-| `observability/tracing.go` | — | `Tracer`, `TraceMiddleware` | no tracing |
-| `observability/redact.go` | — | `SecretRedactor` slog handler | **the access log is unredacted** |
-| `config/reload.go` | — | `Reloader`, `ReloadWithDrain` | no SIGHUP, no config reload |
-| `supervisor/isolation.go` | — | cgroups, namespaces, credentials | the documented isolation tiers ship as unreachable code |
-| `filesystem/{static,cache}.go` | — | precompressed serving, Cache-Control/ETag policy | `main.go` hand-rolls MIME and ETag, emits **no `Cache-Control` at all** |
-| `deploy/{switcher,canary,lock}.go` | — | deploy pipeline, canary, lock file | only `ReleaseManager` is reachable |
-| `diagnostics/{htaccess,shadow,contract}.go` | — | §33 differentiators | no CLI command surfaces them |
-| `runtime/signed.go` | — | Ed25519 signed index, SHA-256 artifact verification | nothing ever downloads or verifies a runtime |
+Originally dead (zero non-test importers):
 
-The middleware chain at `cmd/gateway/main.go:299-300` is currently **one** middleware
-(`observability.Middleware`). Everything else in the list above is absent from the running process.
+| Package / file | What it does | Status |
+|---|---|---|
+| `internal/admin` | token auth, CSRF, audit log, rate limit | **wired** — `Guard` protects the management API |
+| `internal/tls` | `CertManager`, SNI, wildcard, default cert | **wired** — `tls.mode: files` serves HTTPS + HTTP/2 |
+| `internal/policy` | rule engine, token-bucket + per-route limiter | **wired** — `security.mode`, `security.rate_limit` |
+| `observability/metrics.go` | `Metrics`, `PrometheusHandler` | **wired** — `/metrics` on the management listener |
+| `observability/tracing.go` | `Tracer`, `TraceMiddleware` | **wired** — behind `observability.tracing.enabled`, with a cleanup loop |
+| `observability/redact.go` | `SecretRedactor` slog handler | **wired** — installed before anything logs |
+| `config/reload.go` | `Reloader` | **wired** — SIGHUP validates then atomically swaps |
+| `supervisor/isolation.go` | cgroups, namespaces, credentials | **wired** — `php.isolation`, default Tier 0 |
+| `filesystem/cache.go` | Cache-Control/ETag policy | **wired** — policy reused; the resolver-bypassing file server is not |
+| `diagnostics/{htaccess,shadow,contract}.go` | §33 differentiators | **wired** — `migrate htaccess`, `shadow`, `test routes` |
+| `internal/php/fpm` | pool config layering | still dead — adopt in the supervisor or delete |
+| `deploy/{switcher,canary,lock}.go` | deploy pipeline, canary, lock file | still dead; `Prober` no longer a no-op |
+| `runtime/signed.go` | signed index, artifact verification | still dead — nothing downloads a runtime |
 
-Ordering, so each step is independently shippable:
+Bugs found and fixed while wiring, each of which had been silent:
 
-**A — request chain.** Redaction on the slog handler → access log → tracing → metrics → rate limit →
-policy → handler. Add the config surface for each (`security.mode` per §23.4, `security.rate_limit`,
-`observability.*`). Serve `PrometheusHandler()` on the admin listener, not the public one —
-§5.5 requires control-plane/data-plane separation.
-
-Two prerequisites inside this step, because wiring them as-is would be a regression:
-- `metrics.go:51` keys histograms by raw request path (unbounded cardinality) and `:132` emits that
-  path as an unescaped Prometheus label. §32.3 explicitly forbids high-cardinality labels; the
-  escaping bug also means a request to `` /a"}x{y=" `` corrupts the exposition format.
-- `tracing.go:44` is an unbounded `map[TraceID][]*Span`. `Cleanup` exists at `:140` and is never
-  scheduled, so wiring `TraceMiddleware` without a cleanup ticker is an OOM.
-
-Also in this step: honour the limits the config already declares. `servePHP` hardcodes a 20 MiB body
-cap and a 60s timeout (`main.go:475,478`), ignoring `security.max_body_size` and
-`php.request_timeout` — which today only reach the generated FPM conf. Note `security.max_body_size`
-is a `string` field (`config.go:87`) that nothing ever parses; it needs a `ParseByteSize` helper
-validated at config load, not at request time.
-
-**B — lifecycle.** TLS (static certs), SIGHUP reload, and real php-fpm supervision.
-
-On supervision: `Supervisor.Start` execs once. If php-fpm dies, `s.state` stays `StateReady`,
-nothing restarts it, and `HealthCheck` (`supervisor.go:168`) is never called from anywhere in the
-binary. `StateDraining` and `StateAbsent` are declared and never entered. §16.5 wants exponential
-backoff with jitter, a max restart rate, and a circuit-open state — "Never loop rapidly and consume
-the host" — with static kept serving and a stable 503 for PHP routes meanwhile.
-
-On TLS: wire `mode: files` only. `acme.go:48` never contacts an ACME server — it checks a cache,
-calls `generateSelfSigned`, and returns that, under a Let's Encrypt-shaped API. Its own header
-comment admits it. Shipping self-signed certs while claiming automatic TLS is worse than not
-offering the mode, so `mode: acme` should fail loudly at config load until real ACME lands.
-
-**C — surfacing.** Admin auth on the management API, the orphaned diagnostics as CLI commands,
-static caching, and the deploy pipeline. See [Management API security](#management-api-security)
-below for why the first of these is urgent.
+- **php-fpm was killed ten seconds after every start.** `Supervisor.Start` passed the caller's
+  context to `exec.CommandContext`, and the caller passed a 10-second startup timeout, so the child
+  inherited it as a lifetime. Nothing noticed because the state stayed `StateReady`. Found only once
+  the watchdog began health-checking.
+- **Every flag after a positional argument was ignored.** Go's `flag` package stops at the first
+  non-flag argument, so the documented `gateway serve . --php-fpm <path>` silently dropped the flag
+  and started with defaults.
+- **The metrics endpoint would have been a memory leak and a format-corruption bug**: histograms
+  keyed by raw request path, emitted as unescaped Prometheus labels.
+- **The rate limiter could be bypassed by anyone**, because it keyed on `X-Forwarded-For` when
+  present — a client-controlled header — and otherwise on `RemoteAddr` *including the port*, so
+  every new connection got a fresh bucket.
+- **`Prober.Probe` returned `true` unconditionally**, so the deploy pipeline's health gate could
+  never fail.
+- **`admin/csrf.go` hand-rolled SHA-256** with the length suffix in bytes rather than bits, and
+  never verified the MAC anyway. Replaced with `crypto/hmac` + `crypto/sha256`, ~150 lines deleted.
+- **`Stop` only SIGKILLed php-fpm**, orphaning its workers. Now SIGTERM first, SIGKILL on timeout.
 
 ---
 
@@ -112,39 +95,20 @@ Independent, small, and each one currently silent.
   and throws the result away (`match.go:32-36`); `matchRoute:85` and `Rewrite:112` each recompile on
   every call, discarding the error. Store the compiled `*regexp.Regexp` on the route. §13.2 requires
   regexes "compiled at config load".
-- **The deploy health gate is a no-op.** `Prober.Probe` (`switcher.go:161`) always returns `true`;
-  the comment at `:136-141` says it would verify the release structure, and it does not do that
-  either. Activating on a gate that cannot fail is worse than having no gate.
 - **Canary routing uses a clock LSB.** `randomInt` is `time.Now().UnixNano() % 100`
   (`canary.go:161`), not a uniform draw. Bursty traffic routes in correlated blocks. §21.5 also
   wants stable request hashing where session consistency matters, which this isn't.
-- **Hand-rolled, incorrect SHA-256.** `admin/csrf.go:186` implements SHA-256 by hand — its own
-  comment reads "placeholder", "use crypto/sha256 in production" — and encodes the length suffix in
-  **bytes rather than bits**, which is wrong per FIPS 180-4. `newHMACSHA256` at `:145` likewise
-  hand-rolls ipad/opad and doesn't hash down over-long keys. None of it matters today only because
-  `Validate`/`Consume` (`:51`, `:72`) never verify the MAC at all — they do a map lookup on the token
-  string. The package already imports `crypto/rand` and `crypto/subtle`, so there was never a
-  dependency reason for this. It's a ~250-line deletion in favour of `crypto/hmac` + `crypto/sha256`.
 - **A risky-file check that never fires.** `diagnostics/compat.go:262` uses
   `filepath.Glob("**/pattern")`, which does not recurse in Go. `checkRiskyFiles` silently finds
   nothing. Use `filepath.WalkDir`. Related: `compat.checkPHPFiles` reads every `.php` file in the
   tree into memory with no size or count limit, and `CompatibilityReport.ScannedAt` is the literal
   string `"now"` (`compat.go:45`).
-- **A panic reachable from an unauthenticated request.** `tls/acme.go:235` slices
+- **A panic in the ACME challenge handler.** `tls/acme.go:235` slices
   `r.URL.Path[len(prefix):]` without checking the prefix is present; any request shorter than 28
-  characters panics. Currently unreachable because nothing wires it — fix before it becomes
-  reachable.
+  characters panics. Unreachable today because `tls.mode: acme` is rejected at config load — fix
+  before real ACME lands.
 - **httpoxy.** `cgi/params.go:71-74` copies *all* client headers into `HTTP_*`, including `Proxy`.
   Also `SERVER_SOFTWARE` is hardcoded `"go-php-gateway/1.0"` instead of the build version.
-- **Build metadata never reaches the binary.** `Makefile:12` sets `-X main.version=…` but the
-  variables are declared in `internal/buildinfo`. The linker ignores unmatched `-X` silently, so
-  `gateway version` always prints `dev (commit unknown, built unknown, unknown)`. `GoVersion` has no
-  ldflag at all and should just be `runtime.Version()`.
-- **`gateway explain` is half-blind.** `commands.go:128` passes a `nil` router and `nil` policy
-  engine, so the route and policy steps of the trace are always empty — and §33.1 calls the Request
-  Decision Explorer the feature that replaces "confusing rewrite behavior". `diagnostics/explain.go`
-  has the same problem from the other side: it constructs an *empty* policy engine at `:34-39`, so
-  the policy step always reports `allow`.
 - **Deadlock-shaped locking.** `ReleaseManager.Rollback` (`release.go:194`) takes `mu.Lock()` with a
   deferred unlock, then manually unlocks mid-function to call `Activate` and re-locks (`:221-225`).
   It works today, but any early return added between those points double-unlocks or deadlocks.
@@ -152,44 +116,41 @@ Independent, small, and each one currently silent.
   `cmd/gateway/` source directory for every ignore-aware tool — meaning ripgrep-based search
   silently skips the entire request path, and `git add .` won't pick up new files there. Should be
   `/gateway`.
+- **Canary weighting uses a clock LSB.** Still open: `canary.go:161`.
 
 ---
 
-## Management API security
+## Management API security — fixed, recorded here as the reason the auth work was urgent
 
-Calling this out separately because it is the most severe item in the document and it is not a
-missing feature — it is a shipped one.
+`internal/ui` registers 21 API routes plus an embedded SPA and is started unconditionally. It used
+to have **no authentication, no CSRF, no origin check, and no security headers**, while
+`internal/admin`, which had all four and 90.4% coverage, was the dead one.
 
-`internal/ui` registers 21 API routes plus an embedded SPA and is started unconditionally by
-`runServe` (`main.go:271-285`). It has **no authentication, no CSRF, no origin check, and no
-security headers**. `internal/admin`, which has all four and 90.4% coverage, is the dead one.
+What was reachable with no credentials:
 
-Reachable with no credentials:
+- `POST /api/sites` took an attacker-supplied `webroot`, `os.MkdirAll`ed it, and **started a new
+  HTTP listener on an attacker-chosen port serving that directory with PHP execution enabled**.
+  `webroot: "/"` gave a remote filesystem browser plus arbitrary PHP execution.
+- `POST /api/deploy/create` did a recursive copy of an arbitrary `src_dir`.
+- `POST /api/deploy/activate` and `/rollback`.
+- `GET /api/doctor/compat?path=` read an arbitrary path with no allowlist.
+- `GET /api/ws/logs` with `CheckOrigin: func(r) bool { return true }` — any web page open in the
+  operator's browser could attach to the log stream, and the same origin-blindness applied to every
+  POST above.
 
-- `POST /api/sites` (`handlers.go:194`) takes an attacker-supplied `webroot`, `os.MkdirAll`s it, and
-  **starts a new HTTP listener on an attacker-chosen port serving that directory with PHP execution
-  enabled**. `webroot: "/"` gives a remote filesystem browser plus arbitrary PHP execution.
-- `POST /api/deploy/create` (`:812`) does a recursive copy of an arbitrary `src_dir`.
-- `POST /api/deploy/activate` and `/rollback` (`:839`, `:862`).
-- `GET /api/doctor/compat?path=` (`:769`) reads an arbitrary path with no allowlist.
-- `GET /api/ws/logs` (`:729`) with `CheckOrigin: func(r) bool { return true }` (`:725-727`) — any web
-  page open in the operator's browser can attach to the log stream, and the same origin-blindness
-  applies to every POST above.
+The only protection was the default `127.0.0.1` bind, and `--ui-addr` accepted `0.0.0.0` with no
+warning.
 
-The only protection is the default `127.0.0.1` bind, and `--ui-addr` accepts `0.0.0.0` with no
-warning. §36.4 additionally requires separate read and write scopes, token rotation, and origin
-validation, none of which exist.
-
-Fix order matters: replace the broken CSRF crypto **first**, then change
-`admin.Server.authenticate` (`api.go:85-87`) from fail-open-when-no-token-configured to fail-closed,
-then apply the middleware to the `internal/ui` mux.
-
-Separately, `internal/ui/siteManager.go` is a second, parallel request pipeline — a near
-line-for-line duplicate of `servePHP` — that uses an ad-hoc `filepath.Clean` + `strings.HasPrefix`
-traversal check (`:189-202`) instead of the hardened `filesystem.Resolver`, and has **no
-protected-pattern check at all**, so `.env` under a site webroot is served. Two divergent security
-postures for the same job means every fix to one silently misses the other. It should route through
+Now: a bearer token is generated at startup and required on every route except `/api/health`; the
+dashboard exchanges a one-time `?token=` for an `HttpOnly`, `SameSite=Strict` cookie; origin is
+validated on both HTTP requests and WebSocket upgrades; security headers and an audit log are
+applied; a non-loopback `--ui-addr` logs a warning. `siteManager.go` — a second, parallel request
+pipeline that used an ad-hoc `filepath.Clean` + `strings.HasPrefix` check and had no
+protected-pattern list, so `.env` under a site webroot was served — now routes through
 `filesystem.Resolver`.
+
+Still open from §36.4: **separate read and write scopes**, token rotation, and short-lived operation
+tokens. A single token currently grants full control.
 
 ---
 
