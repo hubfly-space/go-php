@@ -1,10 +1,25 @@
 import { useState } from 'react'
-import { Plus, Pencil, Trash2, ExternalLink, Square, Play } from 'lucide-react'
+import { Plus, Pencil, Trash2, ExternalLink, Square, Play, Puzzle } from 'lucide-react'
 import { Card } from '../components/StatCard'
 import Modal, { Toast } from '../components/Modal'
 import { useApi } from '../hooks/useApi'
 import { api } from '../api/client'
 import type { Site, SiteCreateRequest } from '../types'
+
+const ALL_EXTENSIONS = [
+  'curl', 'json', 'mbstring', 'pdo', 'pdo_sqlite', 'pdo_mysql', 'pdo_pgsql',
+  'opcache', 'intl', 'xml', 'gd', 'zip', 'bcmath', 'redis', 'memcached',
+  'xdebug', 'imagick', 'sockets', 'gmp', 'bz2', 'mysqlnd',
+]
+
+const BUILT_IN_PROFILES = [
+  { name: '', description: 'None (use gateway defaults)' },
+  { name: 'minimal', description: 'Minimal set for basic PHP scripts' },
+  { name: 'web-standard', description: 'Standard set for most web applications' },
+  { name: 'wordpress', description: 'Optimized for WordPress' },
+  { name: 'laravel', description: 'Optimized for Laravel' },
+  { name: 'development', description: 'Full feature set for development' },
+]
 
 export default function SitesPage() {
   const { data, loading, refetch } = useApi(() => api.getSites(), [])
@@ -12,9 +27,13 @@ export default function SitesPage() {
   const [editing, setEditing] = useState<Site | null>(null)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
   const [form, setForm] = useState<SiteCreateRequest>({ name: '', port: 8081, webroot: '', php_version: '8.3' })
+  const [siteProfile, setSiteProfile] = useState('')
+  const [siteExts, setSiteExts] = useState<string[]>([])
 
   const resetForm = () => {
     setForm({ name: '', port: nextPort(data?.sites || []), webroot: '', php_version: '8.3' })
+    setSiteProfile('')
+    setSiteExts([])
     setEditing(null)
   }
 
@@ -27,13 +46,21 @@ export default function SitesPage() {
   const openEdit = (site: Site) => {
     setEditing(site)
     setForm({ name: site.name, port: site.port, webroot: site.webroot, php_version: site.php_version })
+    setSiteProfile(site.profile || '')
+    setSiteExts(site.extensions || [])
     setModalOpen(true)
   }
 
   const handleSubmit = async () => {
     try {
       if (editing) {
-        await api.updateSite(editing.id, { ...editing, ...form, updated_at: new Date().toISOString() })
+        await api.updateSite(editing.id, {
+          ...editing,
+          ...form,
+          profile: siteProfile || undefined,
+          extensions: siteExts.length > 0 ? siteExts : undefined,
+          updated_at: new Date().toISOString(),
+        })
         setToast({ message: `Site "${form.name}" updated`, type: 'success' })
       } else {
         await api.createSite(form)
@@ -69,6 +96,12 @@ export default function SitesPage() {
     }
   }
 
+  const toggleSiteExt = (name: string) => {
+    setSiteExts(prev =>
+      prev.includes(name) ? prev.filter(e => e !== name) : [...prev, name]
+    )
+  }
+
   const sites = data?.sites || []
 
   return (
@@ -102,6 +135,7 @@ export default function SitesPage() {
                   <th className="text-left py-3 px-3 text-xs font-medium text-text-muted uppercase tracking-wider">Port</th>
                   <th className="text-left py-3 px-3 text-xs font-medium text-text-muted uppercase tracking-wider">Webroot</th>
                   <th className="text-left py-3 px-3 text-xs font-medium text-text-muted uppercase tracking-wider">PHP</th>
+                  <th className="text-left py-3 px-3 text-xs font-medium text-text-muted uppercase tracking-wider">Extensions</th>
                   <th className="text-left py-3 px-3 text-xs font-medium text-text-muted uppercase tracking-wider">Status</th>
                   <th className="text-right py-3 px-3 text-xs font-medium text-text-muted uppercase tracking-wider">Actions</th>
                 </tr>
@@ -120,6 +154,17 @@ export default function SitesPage() {
                       {site.webroot}
                     </td>
                     <td className="py-3 px-3 text-text-secondary">{site.php_version}</td>
+                    <td className="py-3 px-3">
+                      {site.extensions && site.extensions.length > 0 ? (
+                        <span className="text-xs text-text-secondary">
+                          {site.extensions.length} ext{site.extensions.length !== 1 ? 's' : ''}
+                        </span>
+                      ) : site.profile ? (
+                        <span className="text-xs text-info">{site.profile}</span>
+                      ) : (
+                        <span className="text-xs text-text-muted">default</span>
+                      )}
+                    </td>
                     <td className="py-3 px-3">
                       <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
                         site.status === 'active' ? 'bg-success/10 text-success' :
@@ -196,6 +241,53 @@ export default function SitesPage() {
             </div>
           </div>
           <Field label="Webroot Directory" value={form.webroot} onChange={(v) => setForm({ ...form, webroot: v })} placeholder="/var/www/my-app" hint="The content directory for this site. If empty, a directory will be created automatically." />
+
+          <hr className="border-border" />
+          <div>
+            <h4 className="text-sm font-medium text-text flex items-center gap-2">
+              <Puzzle className="w-4 h-4 text-accent" />
+              Extension Overrides
+            </h4>
+            <p className="text-xs text-text-muted mt-0.5 mb-3">Override gateway-wide extension settings for this site.</p>
+
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-text-muted mb-1.5">Extension Profile</label>
+              <select
+                value={siteProfile}
+                onChange={(e) => setSiteProfile(e.target.value)}
+                className="w-full max-w-xs bg-bg border border-border rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent"
+              >
+                {BUILT_IN_PROFILES.map(p => (
+                  <option key={p.name} value={p.name}>{p.name} — {p.description}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-text-muted mb-1.5">Individual Extensions</label>
+              <div className="flex flex-wrap gap-2">
+                {ALL_EXTENSIONS.map(name => {
+                  const on = siteExts.includes(name)
+                  return (
+                    <button
+                      key={name}
+                      onClick={() => toggleSiteExt(name)}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                        on
+                          ? 'border-accent/30 bg-accent/10 text-accent'
+                          : 'border-border text-text-muted hover:text-text hover:border-border-light'
+                      }`}
+                    >
+                      {name}
+                      {on ? ' ✓' : ''}
+                    </button>
+                  )
+                })}
+              </div>
+              <p className="text-xs text-text-muted mt-1">Extensions checked here will be enabled for this site in addition to the profile.</p>
+            </div>
+          </div>
+
           <div className="flex justify-end gap-3 pt-2">
             <button onClick={() => { setModalOpen(false); resetForm() }} className="px-4 py-2 text-sm text-text-secondary hover:text-text rounded-lg hover:bg-surface-hover transition-colors">
               Cancel

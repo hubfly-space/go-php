@@ -10,6 +10,8 @@ export interface Site {
   ssl: boolean
   created_at: string
   updated_at: string
+  extensions?: string[]
+  profile?: string
 }
 
 export interface SiteCreateRequest {
@@ -17,6 +19,25 @@ export interface SiteCreateRequest {
   port: number
   webroot: string
   php_version: string
+}
+
+export interface ExtensionInfo {
+  name: string
+  type: string
+  description: string
+  version: string
+}
+
+export interface ExtensionProfile {
+  name: string
+  description: string
+  extensions: string[]
+}
+
+export interface SiteExtensions {
+  site_id: string
+  extensions: string[]
+  profile: string
 }
 
 export interface Runtime {
