@@ -257,3 +257,127 @@ func TestGenerateID(t *testing.T) {
 		}
 	}
 }
+
+func TestHandleExtensions(t *testing.T) {
+	s := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/extensions", nil)
+	w := httptest.NewRecorder()
+	s.handleExtensions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp map[string]any
+	json.NewDecoder(w.Body).Decode(&resp)
+	profiles, ok := resp["profiles"].([]any)
+	if !ok {
+		t.Fatal("expected profiles array")
+	}
+	if len(profiles) == 0 {
+		t.Error("expected at least one profile")
+	}
+	extensions, ok := resp["extensions"].([]any)
+	if !ok {
+		t.Fatal("expected extensions array")
+	}
+	if len(extensions) != 0 {
+		t.Errorf("expected empty extensions, got %d", len(extensions))
+	}
+}
+
+func TestHandleExtensionsNotFound(t *testing.T) {
+	s := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/extensions", nil)
+	w := httptest.NewRecorder()
+	s.handleExtensions(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandleProfiles(t *testing.T) {
+	s := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/profiles", nil)
+	w := httptest.NewRecorder()
+	s.handleProfiles(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp map[string]any
+	json.NewDecoder(w.Body).Decode(&resp)
+	profiles, ok := resp["profiles"].([]any)
+	if !ok {
+		t.Fatal("expected profiles array")
+	}
+	if len(profiles) < 4 {
+		t.Errorf("expected at least 4 profiles, got %d", len(profiles))
+	}
+}
+
+func TestHandleProfilesMethodNotAllowed(t *testing.T) {
+	s := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/profiles", nil)
+	w := httptest.NewRecorder()
+	s.handleProfiles(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestHandleExtensionsSiteGet(t *testing.T) {
+	s := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sites/my-site/extensions", nil)
+	w := httptest.NewRecorder()
+	s.handleExtensionsSite(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]any
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["site_id"] != "my-site" {
+		t.Errorf("expected site_id my-site, got %v", resp["site_id"])
+	}
+}
+
+func TestHandleExtensionsSitePut(t *testing.T) {
+	s := newTestServer(t)
+
+	body := `{"extensions":["curl","pdo"],"profile":"web-standard"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/sites/my-site/extensions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handleExtensionsSite(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]any
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["status"] != "ok" {
+		t.Errorf("expected status ok, got %v", resp["status"])
+	}
+}
+
+func TestHandleExtensionsSiteNotFound(t *testing.T) {
+	s := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sites/nonexistent/extensions", nil)
+	w := httptest.NewRecorder()
+	s.handleExtensionsSite(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
