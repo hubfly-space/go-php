@@ -3,16 +3,17 @@ package config
 import (
 	"fmt"
 	"net"
+	"strings"
 	"time"
 )
 
 // knownExtensionProfiles are the valid extension profile names.
 var knownExtensionProfiles = map[string]bool{
-	"minimal":       true,
-	"web-standard":  true,
-	"wordpress":     true,
-	"laravel":       true,
-	"development":   true,
+	"minimal":      true,
+	"web-standard": true,
+	"wordpress":    true,
+	"laravel":      true,
+	"development":  true,
 }
 
 // Validate checks a config for semantic errors.
@@ -116,6 +117,73 @@ func Validate(cfg *Config) error {
 		cfg.Security.SymlinkMode = "within_root"
 	default:
 		return fmt.Errorf("security.symlink_mode must be 'deny' or 'within_root', got %q", cfg.Security.SymlinkMode)
+	}
+
+	switch cfg.Security.Mode {
+	case "off", "observe", "balanced", "strict":
+		// ok
+	case "":
+		cfg.Security.Mode = "balanced"
+	default:
+		return fmt.Errorf("security.mode must be one of 'off', 'observe', 'balanced', 'strict', got %q", cfg.Security.Mode)
+	}
+
+	// Resolve max_body_size once, here, so the request path never parses a
+	// string and a typo fails at load rather than at the first large upload.
+	if cfg.Security.MaxBodySize == "" {
+		cfg.Security.maxBodyBytes = 0
+	} else {
+		n, err := ParseByteSize(cfg.Security.MaxBodySize)
+		if err != nil {
+			return fmt.Errorf("security.max_body_size: %w", err)
+		}
+		cfg.Security.maxBodyBytes = n
+	}
+
+	if cfg.Security.RateLimit.Enabled {
+		if cfg.Security.RateLimit.RequestsPerMinute <= 0 {
+			return fmt.Errorf("security.rate_limit.requests_per_minute must be positive when rate limiting is enabled")
+		}
+		if cfg.Security.RateLimit.Burst < 0 {
+			return fmt.Errorf("security.rate_limit.burst cannot be negative")
+		}
+		if cfg.Security.RateLimit.Burst == 0 {
+			cfg.Security.RateLimit.Burst = cfg.Security.RateLimit.RequestsPerMinute
+		}
+	}
+
+	// Validate TLS.
+	switch cfg.TLS.Mode {
+	case "", "disabled":
+		cfg.TLS.Mode = "disabled"
+	case "files":
+		// A default cert pair or a cert directory is required; without either
+		// the listener would start and then fail every handshake.
+		if cfg.TLS.CertDir == "" && (cfg.TLS.CertFile == "" || cfg.TLS.KeyFile == "") {
+			return fmt.Errorf("tls.mode is 'files' but neither tls.cert_dir nor both tls.cert_file and tls.key_file are set")
+		}
+		if (cfg.TLS.CertFile == "") != (cfg.TLS.KeyFile == "") {
+			return fmt.Errorf("tls.cert_file and tls.key_file must be set together")
+		}
+	case "acme":
+		return fmt.Errorf("tls.mode 'acme' is not implemented: the ACME client does not contact a CA " +
+			"and would serve a self-signed certificate. Use tls.mode 'files' with a certificate from " +
+			"your CA, or terminate TLS upstream")
+	default:
+		return fmt.Errorf("tls.mode must be 'disabled' or 'files', got %q", cfg.TLS.Mode)
+	}
+
+	// Validate observability.
+	if cfg.Observability.Metrics.Path == "" {
+		cfg.Observability.Metrics.Path = "/metrics"
+	}
+	if !strings.HasPrefix(cfg.Observability.Metrics.Path, "/") {
+		return fmt.Errorf("observability.metrics.path must start with '/', got %q", cfg.Observability.Metrics.Path)
+	}
+	if cfg.Observability.Tracing.Retention <= 0 {
+		// An unbounded span map is a memory leak, so a non-positive retention
+		// is corrected rather than accepted.
+		cfg.Observability.Tracing.Retention = 5 * time.Minute
 	}
 
 	return nil

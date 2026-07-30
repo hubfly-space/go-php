@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/go-php/gateway/internal/router"
 	"github.com/go-php/gateway/internal/runtime"
 	"github.com/go-php/gateway/internal/supervisor"
+	gatewaytls "github.com/go-php/gateway/internal/tls"
 	"github.com/go-php/gateway/internal/ui"
 )
 
@@ -340,14 +342,16 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr str
 	logger := slog.Default()
 
 	handler := &gatewayHandler{
-		docRoot:       absRoot,
-		resolver:      resolver,
-		fpm:           fpm,
-		sockPath:      sockPath,
-		routingEngine: routingEngine,
-		logger:        logger,
-		cfg:           cfg,
+		docRoot:  absRoot,
+		fpm:      fpm,
+		sockPath: sockPath,
+		logger:   logger,
 	}
+	handler.state.Store(&serveState{cfg: cfg, resolver: resolver, router: routingEngine})
+
+	// The reloader owns the published config snapshot; the handler owns the
+	// derived request-path components. SIGHUP updates both together.
+	reloader := config.NewReloader(cfg, nil)
 
 	// Build the middleware chain. Order matters and reads outermost-first:
 	// access logging sees every request including ones later layers reject;
@@ -521,20 +525,99 @@ func buildRouter(cfg *config.Config) (*router.Engine, error) {
 	return engine, nil
 }
 
+// serveState is the set of request-path components derived from configuration.
+// It is immutable once published; a reload builds a whole new one and swaps the
+// pointer, so an in-flight request keeps the state it started with (§39.1).
+type serveState struct {
+	cfg      *config.Config
+	resolver *filesystem.Resolver
+	router   *router.Engine
+}
+
 type gatewayHandler struct {
-	docRoot       string
-	resolver      *filesystem.Resolver
-	fpm           *supervisor.Supervisor
-	sockPath      string
-	routingEngine *router.Engine
-	logger        *slog.Logger
-	cfg           *config.Config
+	docRoot  string
+	fpm      *supervisor.Supervisor
+	sockPath string
+	logger   *slog.Logger
+
+	// state is read once per request and never mutated in place.
+	state atomic.Pointer[serveState]
+}
+
+// current returns the active state. Each request reads it exactly once, so a
+// concurrent reload cannot change the configuration mid-request.
+func (h *gatewayHandler) current() *serveState {
+	return h.state.Load()
+}
+
+// reload rebuilds the request-path components from a config file and swaps them
+// in atomically.
+//
+// Everything that can fail — parsing, validation, route compilation — happens
+// before the swap. §5.2: "Never replace a known-good runtime state with an
+// unvalidated configuration."
+func (h *gatewayHandler) reload(configPath string, reloader *config.Reloader) error {
+	newCfg, err := config.Load(configPath)
+	if err != nil {
+		return err
+	}
+
+	newRouter, err := buildRouter(newCfg)
+	if err != nil {
+		return err
+	}
+
+	symlinkMode := filesystem.SymlinkWithinRoot
+	if newCfg.Security.SymlinkMode == "deny" {
+		symlinkMode = filesystem.SymlinkDeny
+	}
+	protected := newCfg.Security.ProtectedPatterns
+	if len(protected) == 0 {
+		protected = filesystem.DefaultProtectedPatterns()
+	}
+	newResolver := filesystem.NewResolver(h.docRoot, symlinkMode, protected)
+
+	// Capture the outgoing state before the swap, so the comparison below sees
+	// what was actually running.
+	old := h.current()
+
+	// Everything below this line is infallible.
+	if err := reloader.Reload(newCfg); err != nil {
+		return err
+	}
+	h.state.Store(&serveState{cfg: newCfg, resolver: newResolver, router: newRouter})
+
+	// Be explicit about what a reload does not cover, rather than letting an
+	// operator believe a change took effect when it did not.
+	if old != nil {
+		if old.cfg.Server.Addr != newCfg.Server.Addr {
+			h.logger.Warn("server.addr changed but requires a restart to take effect",
+				"running", old.cfg.Server.Addr, "configured", newCfg.Server.Addr)
+		}
+		if old.cfg.TLS != newCfg.TLS {
+			h.logger.Warn("tls settings changed but require a restart to take effect")
+		}
+		if old.cfg.PHP.Binary != newCfg.PHP.Binary {
+			h.logger.Warn("php.binary changed but requires a restart to take effect",
+				"running", old.cfg.PHP.Binary, "configured", newCfg.PHP.Binary)
+		}
+		if old.cfg.Security.Mode != newCfg.Security.Mode ||
+			old.cfg.Security.RateLimit != newCfg.Security.RateLimit {
+			h.logger.Warn("security.mode and security.rate_limit changes require a restart to take effect")
+		}
+	}
+
+	return nil
 }
 
 func (h *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	reqID := fmt.Sprintf("req_%d", start.UnixNano())
 	w.Header().Set("X-Request-ID", reqID)
+
+	// Read the configuration snapshot exactly once. A reload that lands
+	// mid-request cannot change the rules this request is judged by (§39.1).
+	st := h.current()
 
 	path := r.URL.Path
 
@@ -547,7 +630,7 @@ func (h *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	normalized := pp.NormalizedPath
 
 	// Check routing rules.
-	if route := h.routingEngine.Match(r); route != nil {
+	if route := st.router.Match(r); route != nil {
 		// Report the route's pattern, never the request path — the metrics
 		// label set must be bounded by the route table (§32.3).
 		observability.SetRouteLabel(r, route.Label())
@@ -564,22 +647,22 @@ func (h *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Check if the path should be routed to PHP-FPM.
 	if strings.HasSuffix(normalized, ".php") {
 		if h.fpm != nil && h.fpm.State() == supervisor.StateReady {
-			h.servePHP(w, r, normalized, reqID, start)
+			h.servePHP(w, r, st, normalized, reqID, start)
 			return
 		}
 	}
 
 	// Check for static file.
-	rf, err := h.resolver.Resolve(normalized)
+	rf, err := st.resolver.Resolve(normalized)
 	if err == nil {
 		defer rf.Close()
-		h.serveStatic(w, r, rf, reqID, start)
+		h.serveStatic(w, r, st, rf, reqID, start)
 		return
 	}
 
 	// Try PHP (for SCRIPT_FILENAME style execution).
 	if h.fpm != nil && h.fpm.State() == supervisor.StateReady {
-		h.servePHP(w, r, normalized, reqID, start)
+		h.servePHP(w, r, st, normalized, reqID, start)
 		return
 	}
 
@@ -590,18 +673,18 @@ func (h *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		indexPath = indexPath + "/index.html"
 	}
-	rf2, err := h.resolver.Resolve(indexPath)
+	rf2, err := st.resolver.Resolve(indexPath)
 	if err == nil {
 		defer rf2.Close()
-		h.serveStatic(w, r, rf2, reqID, start)
+		h.serveStatic(w, r, st, rf2, reqID, start)
 		return
 	}
 
 	h.devError(w, r, 404, "Not Found", "The requested resource was not found.", reqID, start)
 }
 
-func (h *gatewayHandler) serveStatic(w http.ResponseWriter, r *http.Request, rf *filesystem.ResolvedFile, reqID string, start time.Time) {
-	if h.resolver.IsProtected(r.URL.Path) {
+func (h *gatewayHandler) serveStatic(w http.ResponseWriter, r *http.Request, st *serveState, rf *filesystem.ResolvedFile, reqID string, start time.Time) {
+	if st.resolver.IsProtected(r.URL.Path) {
 		h.devError(w, r, 403, "Access Denied", "This file is protected.", reqID, start)
 		return
 	}
@@ -636,7 +719,7 @@ func (h *gatewayHandler) serveStatic(w http.ResponseWriter, r *http.Request, rf 
 		"file", rf.RealPath, "duration_ms", time.Since(start).Milliseconds())
 }
 
-func (h *gatewayHandler) servePHP(w http.ResponseWriter, r *http.Request, normalized, reqID string, start time.Time) {
+func (h *gatewayHandler) servePHP(w http.ResponseWriter, r *http.Request, st *serveState, normalized, reqID string, start time.Time) {
 	w.Header().Set("X-Request-ID", reqID)
 
 	scriptName, scriptPath := resolveScript(h.docRoot, normalized)
@@ -645,7 +728,7 @@ func (h *gatewayHandler) servePHP(w http.ResponseWriter, r *http.Request, normal
 		return
 	}
 
-	resolved, err := h.resolver.ResolveInfo(scriptName)
+	resolved, err := st.resolver.ResolveInfo(scriptName)
 	if err != nil {
 		h.devError(w, r, 404, "Not Found", "Script not found.", reqID, start)
 		return
@@ -669,7 +752,7 @@ func (h *gatewayHandler) servePHP(w http.ResponseWriter, r *http.Request, normal
 	// (§24.1). Content-Length is checked first so an oversized upload is
 	// rejected without streaming it, and the reader is still capped in case the
 	// header lies or is absent.
-	maxBody := h.cfg.Security.MaxBodyBytes()
+	maxBody := st.cfg.Security.MaxBodyBytes()
 	if maxBody > 0 && r.ContentLength > maxBody {
 		h.logger.Warn("request body too large", "request_id", reqID,
 			"content_length", r.ContentLength, "limit", maxBody)
@@ -689,7 +772,7 @@ func (h *gatewayHandler) servePHP(w http.ResponseWriter, r *http.Request, normal
 		}
 	}
 
-	phpTimeout := h.cfg.PHP.RequestTimeout
+	phpTimeout := st.cfg.PHP.RequestTimeout
 	if phpTimeout <= 0 {
 		phpTimeout = 60 * time.Second
 	}

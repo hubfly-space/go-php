@@ -10,13 +10,42 @@ import (
 
 // Config is the top-level gateway configuration.
 type Config struct {
-	Schema   string         `yaml:"schema"`
-	Server   ServerConfig   `yaml:"server"`
-	PHP      PHPConfig      `yaml:"php"`
-	Routes   []RouteConfig  `yaml:"routes"`
-	Logging  LoggingConfig  `yaml:"logging"`
-	Security SecurityConfig `yaml:"security"`
+	Schema        string              `yaml:"schema"`
+	Server        ServerConfig        `yaml:"server"`
+	PHP           PHPConfig           `yaml:"php"`
+	Routes        []RouteConfig       `yaml:"routes"`
+	Logging       LoggingConfig       `yaml:"logging"`
+	Security      SecurityConfig      `yaml:"security"`
+	Observability ObservabilityConfig `yaml:"observability"`
+	TLS           TLSConfig           `yaml:"tls"`
 }
+
+// TLSConfig defines HTTPS settings (§30).
+type TLSConfig struct {
+	// Mode is one of "disabled", "files", or "acme".
+	//
+	// "acme" is rejected at config load. internal/tls/acme.go does not contact
+	// an ACME server — it returns a self-signed certificate under a Let's
+	// Encrypt-shaped API. Serving a self-signed cert while claiming automatic
+	// TLS is worse than declining to offer the mode, so it fails loudly until a
+	// real implementation lands.
+	Mode string `yaml:"mode"`
+
+	// CertFile and KeyFile are the default certificate, used when SNI does not
+	// match a more specific one.
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
+
+	// CertDir, when set, is scanned for per-host certificate pairs for SNI.
+	CertDir string `yaml:"cert_dir"`
+
+	// RedirectFrom, when set, starts a plain HTTP listener on that address that
+	// 301s to HTTPS.
+	RedirectFrom string `yaml:"redirect_from"`
+}
+
+// Enabled reports whether an HTTPS listener should be started.
+func (t TLSConfig) Enabled() bool { return t.Mode == "files" }
 
 // ServerConfig defines HTTP server settings.
 type ServerConfig struct {
@@ -64,14 +93,14 @@ type ExtensionOverride struct {
 
 // RouteConfig defines a single route.
 type RouteConfig struct {
-	Host              string            `yaml:"host"`
-	Path              string            `yaml:"path"`
-	PathPrefix        string            `yaml:"path_prefix"`
-	Regex             string            `yaml:"regex"`
-	Target            string            `yaml:"target"`
-	Status            int               `yaml:"status"`
-	Methods           []string          `yaml:"methods"`
-	Headers           map[string]string `yaml:"headers"`
+	Host              string             `yaml:"host"`
+	Path              string             `yaml:"path"`
+	PathPrefix        string             `yaml:"path_prefix"`
+	Regex             string             `yaml:"regex"`
+	Target            string             `yaml:"target"`
+	Status            int                `yaml:"status"`
+	Methods           []string           `yaml:"methods"`
+	Headers           map[string]string  `yaml:"headers"`
 	ExtensionOverride *ExtensionOverride `yaml:"extensions,omitempty"`
 }
 
@@ -86,6 +115,56 @@ type SecurityConfig struct {
 	ProtectedPatterns []string `yaml:"protected_patterns"`
 	SymlinkMode       string   `yaml:"symlink_mode"` // "deny", "within_root"
 	MaxBodySize       string   `yaml:"max_body_size"`
+
+	// Mode selects how policy rules are enforced (§23.4). One of "off",
+	// "observe", "balanced", or "strict". Note that "off" disables *rules*
+	// only — structural protections such as path canonicalization and script
+	// mapping are never disabled by this setting.
+	Mode string `yaml:"mode"`
+
+	RateLimit RateLimitConfig `yaml:"rate_limit"`
+
+	// maxBodyBytes is MaxBodySize resolved at validation time so the request
+	// path never has to parse a string. Zero means unlimited.
+	maxBodyBytes int64
+}
+
+// MaxBodyBytes returns the parsed value of MaxBodySize. It is populated by
+// Validate; zero means no limit.
+func (s SecurityConfig) MaxBodyBytes() int64 { return s.maxBodyBytes }
+
+// RateLimitConfig defines per-client request rate limiting (§24.3).
+type RateLimitConfig struct {
+	Enabled           bool `yaml:"enabled"`
+	RequestsPerMinute int  `yaml:"requests_per_minute"`
+	Burst             int  `yaml:"burst"`
+}
+
+// ObservabilityConfig defines metrics, tracing, and log redaction settings.
+type ObservabilityConfig struct {
+	Metrics MetricsConfig `yaml:"metrics"`
+	Tracing TracingConfig `yaml:"tracing"`
+
+	// RedactKeys are log attribute keys whose values are replaced before the
+	// record is written (§32.2).
+	RedactKeys []string `yaml:"redact_keys"`
+}
+
+// MetricsConfig controls the Prometheus endpoint. The endpoint is served on the
+// management listener, never on the public one — §5.5 requires control-plane
+// and data-plane separation.
+type MetricsConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Path    string `yaml:"path"`
+}
+
+// TracingConfig controls request tracing.
+type TracingConfig struct {
+	Enabled bool `yaml:"enabled"`
+
+	// Retention bounds how long finished spans are held in memory before
+	// Cleanup discards them. The span map is otherwise unbounded.
+	Retention time.Duration `yaml:"retention"`
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -101,15 +180,15 @@ func DefaultConfig() *Config {
 			MaxHeaderBytes:    1 << 20,
 		},
 		PHP: PHPConfig{
-			MaxChildren:       20,
-			StartServers:      2,
-			MinSpare:          2,
-			MaxSpare:          6,
-			MaxRequests:       500,
-			RequestTimeout:    60 * time.Second,
-			ExtensionProfile:  "",
-			Extensions:        nil,
-			PhpIni:            nil,
+			MaxChildren:      20,
+			StartServers:     2,
+			MinSpare:         2,
+			MaxSpare:         6,
+			MaxRequests:      500,
+			RequestTimeout:   60 * time.Second,
+			ExtensionProfile: "",
+			Extensions:       nil,
+			PhpIni:           nil,
 		},
 		Logging: LoggingConfig{
 			Format: "json",
@@ -118,6 +197,20 @@ func DefaultConfig() *Config {
 		Security: SecurityConfig{
 			SymlinkMode: "within_root",
 			MaxBodySize: "20MB",
+			Mode:        "balanced",
+			RateLimit: RateLimitConfig{
+				Enabled:           false,
+				RequestsPerMinute: 600,
+				Burst:             100,
+			},
+		},
+		Observability: ObservabilityConfig{
+			Metrics: MetricsConfig{Enabled: true, Path: "/metrics"},
+			Tracing: TracingConfig{Enabled: false, Retention: 5 * time.Minute},
+			RedactKeys: []string{
+				"authorization", "cookie", "set-cookie",
+				"password", "token", "secret", "api_key",
+			},
 		},
 	}
 }
