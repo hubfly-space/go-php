@@ -127,12 +127,24 @@ func (e *Engine) Clear() {
 
 // Evaluate runs all rules against a context and returns the final decision.
 func (e *Engine) Evaluate(ctx *Context) Decision {
+	decision, _ := e.EvaluateRule(ctx)
+	return decision
+}
+
+// EvaluateRule runs all rules against a context and returns the final decision
+// together with the rule that produced it, or nil if no rule matched.
+//
+// The rule is what makes a denial explainable (§23.3): a 403 with no rule
+// attribution is indistinguishable from a bug.
+func (e *Engine) EvaluateRule(ctx *Context) (Decision, *Rule) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
 	result := DecisionAllow
+	var matched *Rule
 
-	for _, rule := range e.rules {
+	for i := range e.rules {
+		rule := e.rules[i]
 		if rule.Phase != ctx.Phase {
 			continue
 		}
@@ -147,18 +159,20 @@ func (e *Engine) Evaluate(ctx *Context) Decision {
 
 		switch rule.Mode {
 		case DecisionDeny:
-			return DecisionDeny
+			return DecisionDeny, &rule
 		case DecisionObserve:
 			result = DecisionObserve
+			matched = &rule
 		case DecisionAllow:
 			if result == DecisionObserve {
 				// Allow overrides observe.
 				result = DecisionAllow
+				matched = &rule
 			}
 		}
 	}
 
-	return result
+	return result, matched
 }
 
 func (e *Engine) matchesConditions(rule *Rule, ctx *Context) bool {

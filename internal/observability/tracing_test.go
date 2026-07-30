@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -180,4 +181,52 @@ func TestGenerateID(t *testing.T) {
 	if len(id1) != 32 { // 16 bytes = 32 hex chars
 		t.Errorf("expected 32 hex chars, got %d", len(id1))
 	}
+}
+
+func TestTracerStartCleanupExitsOnCancel(t *testing.T) {
+	tracer := NewTracer("test", slog.Default())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := tracer.StartCleanup(ctx, time.Millisecond, time.Hour)
+
+	cancel()
+
+	select {
+	case <-done:
+		// Goroutine exited, as §62 requires.
+	case <-time.After(2 * time.Second):
+		t.Fatal("cleanup goroutine did not exit after context cancellation")
+	}
+}
+
+func TestTracerStartCleanupBoundsSpanMap(t *testing.T) {
+	tracer := NewTracer("test", slog.Default())
+
+	// Without a cleanup loop this map grows without limit.
+	for i := 0; i < 50; i++ {
+		traceID, span := tracer.StartTrace("req")
+		tracer.FinishSpan(span)
+		_ = traceID
+	}
+	if tracer.ActiveTraces() != 50 {
+		t.Fatalf("setup: active traces = %d, want 50", tracer.ActiveTraces())
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// maxAge of 0 makes every finished trace immediately eligible.
+	done := tracer.StartCleanup(ctx, time.Millisecond, 0)
+
+	deadline := time.After(2 * time.Second)
+	for tracer.ActiveTraces() > 0 {
+		select {
+		case <-deadline:
+			t.Fatalf("traces not reclaimed: %d still active", tracer.ActiveTraces())
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	cancel()
+	<-done
 }
