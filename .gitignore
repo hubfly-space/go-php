@@ -1,4 +1,4 @@
 .material
 AGENTS.md
 gateway
-!cmd/gateway/main.go
+!cmd/gateway

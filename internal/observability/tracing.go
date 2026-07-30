@@ -155,6 +155,37 @@ func (t *Tracer) Cleanup(maxAge time.Duration) int {
 	return removed
 }
 
+// StartCleanup runs Cleanup on an interval until ctx is canceled, and returns
+// when the goroutine has exited.
+//
+// This is not optional. Tracer.spans is an unbounded map keyed by trace ID, so
+// installing TraceMiddleware without a cleanup loop is a memory leak that grows
+// with request volume. Callers own the returned channel and may wait on it to
+// prove the goroutine exited (§62).
+func (t *Tracer) StartCleanup(ctx context.Context, interval, maxAge time.Duration) <-chan struct{} {
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if removed := t.Cleanup(maxAge); removed > 0 && t.logger != nil {
+					t.logger.Debug("trace cleanup", "removed", removed, "active", t.ActiveTraces())
+				}
+			}
+		}
+	}()
+
+	return done
+}
+
 // TraceContext holds trace information propagated through request context.
 type traceContextKey struct{}
 
