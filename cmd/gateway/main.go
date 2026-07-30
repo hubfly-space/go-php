@@ -202,6 +202,28 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr str
 		}
 		pidPath := filepath.Join(os.TempDir(), fmt.Sprintf("gateway-%d.pid", os.Getpid()))
 
+		// Resolve extensions from config.
+		extensions, iniSettings, err := config.ResolveExtensions(&cfg.PHP)
+		if err != nil {
+			slog.Warn("could not resolve PHP extensions", "error", err)
+		}
+
+		supExtensions := make([]supervisor.Extension, 0, len(extensions))
+		for _, ext := range extensions {
+			supExtensions = append(supExtensions, supervisor.Extension{
+				Name: ext.Name,
+				Type: ext.Type,
+			})
+		}
+
+		supIni := make([]supervisor.IniSetting, 0, len(iniSettings))
+		for _, ini := range iniSettings {
+			supIni = append(supIni, supervisor.IniSetting{
+				Name:  ini.Name,
+				Value: ini.Value,
+			})
+		}
+
 		fpm = supervisor.New(supervisor.Config{
 			PHPBinary:      cfg.PHP.Binary,
 			SocketPath:     sockPath,
@@ -213,6 +235,8 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr str
 			MaxRequests:    cfg.PHP.MaxRequests,
 			RequestTimeout: cfg.PHP.RequestTimeout,
 			ErrorLog:       filepath.Join(os.TempDir(), "gateway-fpm-error.log"),
+			Extensions:     supExtensions,
+			PhpIni:         supIni,
 		})
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

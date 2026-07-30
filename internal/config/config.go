@@ -47,7 +47,7 @@ type PHPConfig struct {
 type ExtensionConfig struct {
 	Name    string `yaml:"name"`
 	Type    string `yaml:"type"`    // "extension" or "zend_extension"
-	Enabled bool   `yaml:"enabled"` // default true
+	Enabled *bool  `yaml:"enabled"` // nil means enabled
 }
 
 // IniSetting defines a php.ini directive.

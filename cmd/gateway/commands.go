@@ -311,7 +311,7 @@ func runPHP(args []string) error {
 		}
 		defer os.RemoveAll(tmpDir)
 
-		rt, err := reg.Install(manifest, tmpDir)
+		rt, err := reg.Install(manifest, tmpDir, nil)
 		if err != nil {
 			return fmt.Errorf("install runtime %s: %w", ver, err)
 		}
