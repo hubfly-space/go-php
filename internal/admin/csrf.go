@@ -1,7 +1,9 @@
 package admin
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"net/http"
@@ -29,12 +31,47 @@ func NewCSRFProtect(secret string, ttl time.Duration) *CSRFProtect {
 	}
 }
 
+// hmacSign computes HMAC-SHA256 over data.
+func hmacSign(key, data []byte) []byte {
+	mac := hmac.New(sha256.New, key)
+	mac.Write(data)
+	return mac.Sum(nil)
+}
+
+// verifySignature checks a "<nonce-hex>.<mac-hex>" token's HMAC in constant
+// time and returns the nonce.
+//
+// This used to be missing entirely: Validate and Consume did a bare map lookup,
+// so the signature was decorative. Verifying it means a token that was never
+// issued by this process is rejected on its own merits, not merely because it
+// is absent from a map that a restart empties.
+func (c *CSRFProtect) verifySignature(token string) bool {
+	noncePart, macPart, found := strings.Cut(token, ".")
+	if !found {
+		return false
+	}
+
+	nonce, err := hex.DecodeString(noncePart)
+	if err != nil {
+		return false
+	}
+	gotMAC, err := hex.DecodeString(macPart)
+	if err != nil {
+		return false
+	}
+
+	return hmac.Equal(gotMAC, hmacSign(c.secret, nonce))
+}
+
 // GenerateToken creates a new CSRF token.
 func (c *CSRFProtect) GenerateToken() string {
 	b := make([]byte, 32)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		// crypto/rand cannot fail on supported platforms; if it somehow does,
+		// returning a predictable token would be far worse than panicking.
+		panic("admin: crypto/rand failed: " + err.Error())
+	}
 
-	// Sign the token with HMAC.
 	mac := hmacSign(c.secret, b)
 	token := hex.EncodeToString(b) + "." + hex.EncodeToString(mac)
 
@@ -49,7 +86,7 @@ func (c *CSRFProtect) GenerateToken() string {
 
 // Validate checks if a CSRF token is valid.
 func (c *CSRFProtect) Validate(token string) bool {
-	if token == "" {
+	if token == "" || !c.verifySignature(token) {
 		return false
 	}
 
@@ -61,15 +98,15 @@ func (c *CSRFProtect) Validate(token string) bool {
 		return false
 	}
 
-	if time.Since(created) > c.ttl {
-		return false
-	}
-
-	return true
+	return time.Since(created) <= c.ttl
 }
 
 // Consume validates and removes a token (single-use).
 func (c *CSRFProtect) Consume(token string) bool {
+	if token == "" || !c.verifySignature(token) {
+		return false
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -78,13 +115,8 @@ func (c *CSRFProtect) Consume(token string) bool {
 		return false
 	}
 
-	if time.Since(created) > c.ttl {
-		delete(c.tokens, token)
-		return false
-	}
-
 	delete(c.tokens, token)
-	return true
+	return time.Since(created) <= c.ttl
 }
 
 func (c *CSRFProtect) evict() {
@@ -124,158 +156,6 @@ func (c *CSRFProtect) Middleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
-}
-
-// hmacSign computes HMAC-SHA256.
-func hmacSign(key, data []byte) []byte {
-	// Simple HMAC implementation without importing crypto/hmac
-	// to avoid unnecessary dependencies.
-	// In production, use crypto/hmac.
-	if len(key) == 0 {
-		return nil
-	}
-
-	// Use SHA-256.
-	h := newHMACSHA256(key)
-	h.Write(data)
-	return h.Sum(nil)
-}
-
-// newHMACSHA256 creates a new HMAC-SHA256 hasher.
-func newHMACSHA256(key []byte) *hmacSHA256 {
-	blockSize := 64
-	k := make([]byte, blockSize)
-	copy(k, key)
-
-	ipad := make([]byte, blockSize)
-	opad := make([]byte, blockSize)
-
-	for i := 0; i < blockSize; i++ {
-		if i < len(k) {
-			ipad[i] = k[i] ^ 0x36
-			opad[i] = k[i] ^ 0x5c
-		}
-	}
-
-	return &hmacSHA256{
-		ipad: ipad,
-		opad: opad,
-	}
-}
-
-type hmacSHA256 struct {
-	ipad []byte
-	opad []byte
-	buf  []byte
-}
-
-func (h *hmacSHA256) Write(p []byte) (int, error) {
-	h.buf = append(h.buf, p...)
-	return len(p), nil
-}
-
-func (h *hmacSHA256) Sum(b []byte) []byte {
-	// Inner hash.
-	inner := sha256Sum(append(h.ipad, h.buf...))
-	// Outer hash.
-	outer := sha256Sum(append(h.opad, inner...))
-	return append(b, outer...)
-}
-
-// sha256Sum returns the SHA-256 digest.
-func sha256Sum(data []byte) []byte {
-	// Minimal SHA-256 — use crypto/sha256 in production.
-	// This is a placeholder for the CSRF implementation.
-	// Import crypto/sha256 and use sha256.Sum256(data) in real code.
-	const (
-		h0 = 0x6a09e667
-		h1 = 0xbb67ae85
-		h2 = 0x3c6ef372
-		h3 = 0xa54ff53a
-		h4 = 0x510e527f
-		h5 = 0x9b05688c
-		h6 = 0x1f83d9ab
-		h7 = 0x5be0cd19
-	)
-
-	// Pad the message.
-	msgLen := len(data)
-	data = append(data, 0x80)
-	for len(data)%64 != 56 {
-		data = append(data, 0)
-	}
-	data = append(data, byte(msgLen>>56), byte(msgLen>>48), byte(msgLen>>40), byte(msgLen>>32),
-		byte(msgLen>>24), byte(msgLen>>16), byte(msgLen>>8), byte(msgLen))
-
-	h := [8]uint32{h0, h1, h2, h3, h4, h5, h6, h7}
-
-	for i := 0; i < len(data); i += 64 {
-		var w [64]uint32
-		for j := 0; j < 16; j++ {
-			w[j] = uint32(data[i+j*4])<<24 | uint32(data[i+j*4+1])<<16 |
-				uint32(data[i+j*4+2])<<8 | uint32(data[i+j*4+3])
-		}
-
-		for j := 16; j < 64; j++ {
-			s0 := rotr(w[j-15], 7) ^ rotr(w[j-15], 18) ^ (w[j-15] >> 3)
-			s1 := rotr(w[j-2], 17) ^ rotr(w[j-2], 19) ^ (w[j-2] >> 10)
-			w[j] = w[j-16] + s0 + w[j-7] + s1
-		}
-
-		a, b, c, d, e, f, g, hh := h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]
-
-		for j := 0; j < 64; j++ {
-			S1 := rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)
-			ch := (e & f) ^ (^e & g)
-			temp1 := hh + S1 + ch + k256[j] + w[j]
-			S0 := rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)
-			maj := (a & b) ^ (a & c) ^ (b & c)
-			temp2 := S0 + maj
-
-			hh = g
-			g = f
-			f = e
-			e = d + temp1
-			d = c
-			c = b
-			b = a
-			a = temp1 + temp2
-		}
-
-		h[0] += a
-		h[1] += b
-		h[2] += c
-		h[3] += d
-		h[4] += e
-		h[5] += f
-		h[6] += g
-		h[7] += hh
-	}
-
-	result := make([]byte, 32)
-	for i, v := range h {
-		result[i*4] = byte(v >> 24)
-		result[i*4+1] = byte(v >> 16)
-		result[i*4+2] = byte(v >> 8)
-		result[i*4+3] = byte(v)
-	}
-
-	return result
-}
-
-func rotr(x uint32, n uint) uint32 {
-	return (x >> n) | (x << (32 - n))
-}
-
-var k256 = [64]uint32{
-	0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-	0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-	0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-	0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-	0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-	0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-	0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-	0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 }
 
 // ValidateOrigin checks the Origin header against allowed origins.

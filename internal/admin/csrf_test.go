@@ -223,3 +223,78 @@ func TestSecurityMiddleware_RejectsBadOrigin(t *testing.T) {
 		t.Errorf("expected 403 for bad origin, got %d", rec.Code)
 	}
 }
+
+func TestCSRFRejectsForgedToken(t *testing.T) {
+	c := NewCSRFProtect("test-secret", time.Hour)
+
+	// A well-formed token with a bogus MAC. Before the signature was actually
+	// verified, this was rejected only because it was absent from the map —
+	// which is not the same guarantee.
+	forged := strings.Repeat("ab", 32) + "." + strings.Repeat("cd", 32)
+	if c.Validate(forged) {
+		t.Error("Validate accepted a token with an invalid signature")
+	}
+	if c.Consume(forged) {
+		t.Error("Consume accepted a token with an invalid signature")
+	}
+}
+
+func TestCSRFRejectsTamperedNonce(t *testing.T) {
+	c := NewCSRFProtect("test-secret", time.Hour)
+	token := c.GenerateToken()
+
+	nonce, mac, _ := strings.Cut(token, ".")
+	// Flip one hex digit of the nonce, keeping the original MAC.
+	flipped := "f" + nonce[1:]
+	if flipped == nonce {
+		flipped = "0" + nonce[1:]
+	}
+
+	if c.Validate(flipped + "." + mac) {
+		t.Error("Validate accepted a token whose nonce was altered")
+	}
+}
+
+func TestCSRFRejectsMalformedTokens(t *testing.T) {
+	c := NewCSRFProtect("test-secret", time.Hour)
+
+	for _, token := range []string{
+		"",
+		"no-separator",
+		".",
+		"zz.zz", // invalid hex
+		"abcd",  // no MAC part
+		"abcd.", // empty MAC
+		strings.Repeat("a", 5000) + "." + strings.Repeat("b", 5000),
+	} {
+		if c.Validate(token) {
+			t.Errorf("Validate accepted malformed token %q", token)
+		}
+	}
+}
+
+func TestCSRFSignatureIsSecretDependent(t *testing.T) {
+	a := NewCSRFProtect("secret-a", time.Hour)
+	b := NewCSRFProtect("secret-b", time.Hour)
+
+	// A token minted under one secret must not verify under another.
+	token := a.GenerateToken()
+	if b.verifySignature(token) {
+		t.Error("a token signed with one secret verified under a different secret")
+	}
+	if !a.verifySignature(token) {
+		t.Error("a token failed to verify under its own secret")
+	}
+}
+
+func TestCSRFTokenIsSingleUse(t *testing.T) {
+	c := NewCSRFProtect("test-secret", time.Hour)
+	token := c.GenerateToken()
+
+	if !c.Consume(token) {
+		t.Fatal("first Consume should succeed")
+	}
+	if c.Consume(token) {
+		t.Error("second Consume should fail; tokens are single-use")
+	}
+}
