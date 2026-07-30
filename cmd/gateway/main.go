@@ -21,6 +21,7 @@ import (
 	"github.com/go-php/gateway/internal/observability"
 	"github.com/go-php/gateway/internal/php/cgi"
 	"github.com/go-php/gateway/internal/php/fastcgi"
+	"github.com/go-php/gateway/internal/policy"
 	"github.com/go-php/gateway/internal/router"
 	"github.com/go-php/gateway/internal/runtime"
 	"github.com/go-php/gateway/internal/supervisor"
@@ -49,11 +50,15 @@ func main() {
 	var err error
 	switch cmd {
 	case "serve":
-		serveCmd.Parse(args)
-		err = runServe(*addr, *phpFPM, *configPath, serveCmd.Args(), *uiAddrFlag)
+		var positional []string
+		if positional, err = parseFlagsPermuted(serveCmd, args); err == nil {
+			err = runServe(*addr, *phpFPM, *configPath, positional, *uiAddrFlag)
+		}
 	case "init":
-		initCmd.Parse(args)
-		err = runInit(*initFramework, *initPHP, initCmd.Args())
+		var positional []string
+		if positional, err = parseFlagsPermuted(initCmd, args); err == nil {
+			err = runInit(*initFramework, *initPHP, positional)
+		}
 	case "doctor":
 		err = runDoctor()
 	case "compat":
@@ -85,6 +90,31 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\033[31mError: %v\033[0m\n", err)
 		os.Exit(1)
+	}
+}
+
+// parseFlagsPermuted parses flags that may appear before, after, or interleaved
+// with positional arguments, and returns the positional arguments.
+//
+// Go's flag package stops at the first non-flag argument, so the documented
+// invocation `gateway serve . --php-fpm /usr/sbin/php-fpm8.3` silently ignored
+// every flag after the ".". Silently is the problem: the server started with
+// default settings and reported nothing.
+func parseFlagsPermuted(fs *flag.FlagSet, args []string) ([]string, error) {
+	var positional []string
+
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		rest := fs.Args()
+		if len(rest) == 0 {
+			return positional, nil
+		}
+		// Take one positional and resume parsing after it, so a flag that
+		// follows still gets seen.
+		positional = append(positional, rest[0])
+		args = rest[1:]
 	}
 }
 
@@ -123,6 +153,27 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr str
 	if phpFPMPath != "" {
 		cfg.PHP.Binary = phpFPMPath
 	}
+
+	// Install log redaction before anything logs. §32.2 requires secrets to
+	// stay out of the access log, and a redactor installed late is a redactor
+	// that already leaked.
+	if len(cfg.Observability.RedactKeys) > 0 {
+		slog.SetDefault(slog.New(observability.StdoutRedactor(cfg.Observability.RedactKeys)))
+	}
+
+	// rootCtx bounds every background goroutine this command starts. Each one
+	// returns a done channel; the single deferred closure below cancels first
+	// and only then waits, so the process does not exit with work still in
+	// flight (§62). Separate defers would deadlock — LIFO ordering would run
+	// the waits before the cancel.
+	rootCtx, stopBackground := context.WithCancel(context.Background())
+	var backgroundDone []<-chan struct{}
+	defer func() {
+		stopBackground()
+		for _, done := range backgroundDone {
+			<-done
+		}
+	}()
 
 	// Auto-detect PHP-FPM binary if the provided path doesn't exist.
 	if cfg.PHP.Binary != "" {
@@ -175,23 +226,9 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr str
 	}
 	resolver := filesystem.NewResolver(absRoot, symlinkMode, protected)
 
-	// Build routes from config.
-	var routes []router.Route
-	for _, rc := range cfg.Routes {
-		routes = append(routes, router.Route{
-			Host:       rc.Host,
-			Path:       rc.Path,
-			PathPrefix: rc.PathPrefix,
-			Regex:      rc.Regex,
-			Target:     rc.Target,
-			Status:     rc.Status,
-			Methods:    rc.Methods,
-			Headers:    rc.Headers,
-		})
-	}
-	routingEngine, err := router.NewEngine(routes)
+	routingEngine, err := buildRouter(cfg)
 	if err != nil {
-		return fmt.Errorf("build routes: %w", err)
+		return err
 	}
 
 	// Start PHP-FPM.
@@ -267,12 +304,24 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr str
 		}
 	}
 
+	// Metrics are constructed before the management server so the collector can
+	// be shared: the middleware records into it and the management listener
+	// exposes it.
+	var metrics *observability.Metrics
+	if cfg.Observability.Metrics.Enabled {
+		metrics = observability.NewMetrics()
+	}
+
 	// Start management UI server.
 	uiCfg := ui.DefaultConfig()
 	if uiAddr != "" {
 		uiCfg.Addr = uiAddr
 	}
 	uiCfg.SockPath = sockPath
+	if metrics != nil {
+		uiCfg.MetricsPath = cfg.Observability.Metrics.Path
+		uiCfg.MetricsHandler = metrics.PrometheusHandler()
+	}
 	statusProvider := ui.NewStatusProvider(buildinfo.Get().Version, cfg.Server.Addr, absRoot, framework)
 	statusProvider.Runtimes = detectRuntimes(cfg.PHP.Binary)
 
@@ -281,6 +330,10 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr str
 		slog.Warn("could not start management UI", "error", err)
 	} else {
 		slog.Info("management UI started", "addr", ui.FormatAddr(uiCfg.Addr))
+		if metrics != nil {
+			slog.Info("metrics endpoint",
+				"url", ui.FormatAddr(uiCfg.Addr)+cfg.Observability.Metrics.Path)
+		}
 		defer uiServer.Stop()
 	}
 
@@ -296,7 +349,42 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr str
 		cfg:           cfg,
 	}
 
+	// Build the middleware chain. Order matters and reads outermost-first:
+	// access logging sees every request including ones later layers reject;
+	// tracing wraps the work; metrics observe what the policy layer admits
+	// plus what it rejects; the rate limiter runs before the policy engine so
+	// a flood costs as little as possible (§3.3: "Minimal work for denied
+	// requests").
 	var h http.Handler = handler
+
+	securityMode, err := policy.ParseMode(cfg.Security.Mode)
+	if err != nil {
+		return fmt.Errorf("security.mode: %w", err)
+	}
+	policyEngine := policy.NewEngineForMode(securityMode)
+	h = policy.ModeMiddleware(policyEngine, securityMode, logger)(h)
+
+	if cfg.Security.RateLimit.Enabled {
+		limiter := policy.NewPerRouteLimiter(cfg.Security.RateLimit.RequestsPerMinute)
+		backgroundDone = append(backgroundDone, limiter.StartCleanup(rootCtx, time.Minute))
+		h = limiter.Middleware(h)
+		slog.Info("rate limiting enabled",
+			"requests_per_minute", cfg.Security.RateLimit.RequestsPerMinute,
+			"burst", cfg.Security.RateLimit.Burst)
+	}
+
+	if metrics != nil {
+		h = metrics.Middleware(h)
+	}
+
+	if cfg.Observability.Tracing.Enabled {
+		tracer := observability.NewTracer("gateway", logger)
+		// Without this the span map grows without bound.
+		backgroundDone = append(backgroundDone, tracer.StartCleanup(rootCtx,
+			cfg.Observability.Tracing.Retention/2, cfg.Observability.Tracing.Retention))
+		h = observability.TraceMiddleware(tracer)(h)
+	}
+
 	h = observability.Middleware(logger)(h)
 
 	server := &http.Server{
@@ -309,24 +397,128 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr str
 		MaxHeaderBytes:    cfg.Server.MaxHeaderBytes,
 	}
 
+	// Configure TLS if enabled. Validate has already rejected the acme mode and
+	// checked that a usable certificate source is configured.
+	var redirectServer *http.Server
+	if cfg.TLS.Enabled() {
+		certMgr := gatewaytls.NewCertManager("")
+
+		if cfg.TLS.CertDir != "" {
+			if err := certMgr.LoadCertDir(cfg.TLS.CertDir); err != nil {
+				return fmt.Errorf("load tls.cert_dir: %w", err)
+			}
+		}
+		if cfg.TLS.CertFile != "" {
+			if err := certMgr.SetDefault(cfg.TLS.CertFile, cfg.TLS.KeyFile); err != nil {
+				return fmt.Errorf("load tls.cert_file: %w", err)
+			}
+		}
+
+		server.TLSConfig = certMgr.GetConfigForClient()
+		slog.Info("TLS enabled", "domains", certMgr.Domains(),
+			"default_cert", cfg.TLS.CertFile != "")
+
+		if cfg.TLS.RedirectFrom != "" {
+			redirectServer = &http.Server{
+				Addr:              cfg.TLS.RedirectFrom,
+				Handler:           gatewaytls.RedirectHandler(cfg.Server.Addr),
+				ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout,
+			}
+			go func() {
+				slog.Info("HTTP redirect listener", "addr", cfg.TLS.RedirectFrom)
+				if err := redirectServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					slog.Error("redirect listener failed", "error", err)
+				}
+			}()
+		}
+	}
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	// SIGHUP reloads configuration. §5.2: "Never replace a known-good runtime
+	// state with an unvalidated configuration" — a reload that fails validation
+	// logs and leaves the running config in place.
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
 
 	go func() {
 		<-quit
 		slog.Info("shutting down gracefully...")
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
+		if redirectServer != nil {
+			redirectServer.Shutdown(ctx)
+		}
 		server.Shutdown(ctx)
 	}()
 
-	slog.Info("listening", "addr", cfg.Server.Addr)
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	go func() {
+		for {
+			select {
+			case <-rootCtx.Done():
+				return
+			case <-hup:
+				if configPath == "" {
+					slog.Warn("SIGHUP ignored: no config file was given at startup")
+					continue
+				}
+				if err := handler.reload(configPath, reloader); err != nil {
+					// The running configuration is untouched (§5.2).
+					slog.Error("config reload rejected, keeping running configuration",
+						"path", configPath, "error", err)
+					continue
+				}
+				slog.Info("configuration reloaded", "path", configPath,
+					"version", reloader.Version())
+			}
+		}
+	}()
+
+	scheme := "http"
+	if cfg.TLS.Enabled() {
+		scheme = "https"
+	}
+	slog.Info("listening", "addr", cfg.Server.Addr, "scheme", scheme)
+
+	if cfg.TLS.Enabled() {
+		// Certificates come from server.TLSConfig.GetCertificate, so the file
+		// arguments are intentionally empty.
+		err = server.ListenAndServeTLS("", "")
+	} else {
+		err = server.ListenAndServe()
+	}
+	if err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("listen: %w", err)
 	}
 
 	slog.Info("server stopped")
 	return nil
+}
+
+// buildRouter converts config routes into a routing engine. It is shared by
+// serve and explain so that a trace reflects the routing the server would
+// actually perform.
+func buildRouter(cfg *config.Config) (*router.Engine, error) {
+	routes := make([]router.Route, 0, len(cfg.Routes))
+	for _, rc := range cfg.Routes {
+		routes = append(routes, router.Route{
+			Host:       rc.Host,
+			Path:       rc.Path,
+			PathPrefix: rc.PathPrefix,
+			Regex:      rc.Regex,
+			Target:     rc.Target,
+			Status:     rc.Status,
+			Methods:    rc.Methods,
+			Headers:    rc.Headers,
+		})
+	}
+
+	engine, err := router.NewEngine(routes)
+	if err != nil {
+		return nil, fmt.Errorf("build routes: %w", err)
+	}
+	return engine, nil
 }
 
 type gatewayHandler struct {
@@ -356,6 +548,10 @@ func (h *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Check routing rules.
 	if route := h.routingEngine.Match(r); route != nil {
+		// Report the route's pattern, never the request path — the metrics
+		// label set must be bounded by the route table (§32.3).
+		observability.SetRouteLabel(r, route.Label())
+
 		if route.IsRedirect() {
 			target := route.Rewrite(normalized)
 			http.Redirect(w, r, target, route.Status)
@@ -469,13 +665,35 @@ func (h *gatewayHandler) servePHP(w http.ResponseWriter, r *http.Request, normal
 	}
 	defer client.Close()
 
+	// Enforce the configured body limit before handing the request to PHP
+	// (§24.1). Content-Length is checked first so an oversized upload is
+	// rejected without streaming it, and the reader is still capped in case the
+	// header lies or is absent.
+	maxBody := h.cfg.Security.MaxBodyBytes()
+	if maxBody > 0 && r.ContentLength > maxBody {
+		h.logger.Warn("request body too large", "request_id", reqID,
+			"content_length", r.ContentLength, "limit", maxBody)
+		h.devError(w, r, http.StatusRequestEntityTooLarge, "Payload Too Large",
+			fmt.Sprintf("Request body exceeds the configured limit of %d bytes.", maxBody),
+			reqID, start)
+		return
+	}
+
 	var stdin io.Reader
 	if r.Body != nil {
 		defer r.Body.Close()
-		stdin = io.LimitReader(r.Body, 20<<20)
+		if maxBody > 0 {
+			stdin = io.LimitReader(r.Body, maxBody)
+		} else {
+			stdin = r.Body
+		}
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	phpTimeout := h.cfg.PHP.RequestTimeout
+	if phpTimeout <= 0 {
+		phpTimeout = 60 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), phpTimeout)
 	defer cancel()
 
 	type result struct {

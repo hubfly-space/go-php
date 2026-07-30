@@ -14,6 +14,7 @@ import (
 	"github.com/go-php/gateway/internal/deploy"
 	"github.com/go-php/gateway/internal/diagnostics"
 	"github.com/go-php/gateway/internal/filesystem"
+	"github.com/go-php/gateway/internal/policy"
 	gatewayRuntime "github.com/go-php/gateway/internal/runtime"
 )
 
@@ -103,24 +104,93 @@ func runCompat(args []string) error {
 }
 
 // runExplain traces a request through the decision pipeline.
+//
+// The trace is only as truthful as the components it is given. Passing a nil
+// router and nil policy engine — as this command used to — leaves the route and
+// policy steps permanently empty, which makes §33.1's whole purpose ("replacing
+// confusing rewrite behavior") unserved. So this builds the same router,
+// resolver, and policy engine that `serve` would build from the same config.
 func runExplain(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: gateway explain <url-or-path>")
+	fs := flag.NewFlagSet("explain", flag.ExitOnError)
+	configPath := fs.String("config", "", "path to gateway.yaml (default: ./gateway.yaml if present)")
+	method := fs.String("method", "GET", "HTTP method to trace")
+	host := fs.String("host", "", "Host header to trace (default: localhost)")
+	docRootFlag := fs.String("root", ".", "document root")
+	if err := fs.Parse(args); err != nil {
+		return err
 	}
 
-	target := args[0]
+	rest := fs.Args()
+	if len(rest) == 0 {
+		return fmt.Errorf("usage: gateway explain [flags] <url-or-path>")
+	}
+
+	target := rest[0]
 	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
-		target = "http://localhost" + target
+		hostname := *host
+		if hostname == "" {
+			hostname = "localhost"
+		}
+		target = "http://" + hostname + target
 	}
 
-	req, err := http.NewRequest("GET", target, nil)
+	req, err := http.NewRequest(*method, target, nil)
 	if err != nil {
 		return fmt.Errorf("invalid request: %w", err)
 	}
+	if *host != "" {
+		req.Host = *host
+	}
 
-	absRoot, _ := filepath.Abs(".")
-	resolver := filesystem.NewResolver(absRoot, filesystem.SymlinkWithinRoot, filesystem.DefaultProtectedPatterns())
-	explainer := diagnostics.NewRequestExplainer(resolver, nil, nil, absRoot)
+	// Load the same config serve would. Falling back to defaults keeps the
+	// command usable in a bare directory.
+	cfg := config.DefaultConfig()
+	path := *configPath
+	if path == "" {
+		if _, statErr := os.Stat("gateway.yaml"); statErr == nil {
+			path = "gateway.yaml"
+		}
+	}
+	if path != "" {
+		cfg, err = config.Load(path)
+		if err != nil {
+			return fmt.Errorf("load config: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "using config: %s\n", path)
+	}
+
+	absRoot, err := filepath.Abs(*docRootFlag)
+	if err != nil {
+		return fmt.Errorf("resolve root: %w", err)
+	}
+	// Mirror serve's document-root pivot, or the file-resolution step would
+	// report misses for every framework request.
+	if _, pubRoot := detectFramework(absRoot); pubRoot != "" {
+		absRoot = pubRoot
+	}
+
+	symlinkMode := filesystem.SymlinkWithinRoot
+	if cfg.Security.SymlinkMode == "deny" {
+		symlinkMode = filesystem.SymlinkDeny
+	}
+	protected := cfg.Security.ProtectedPatterns
+	if len(protected) == 0 {
+		protected = filesystem.DefaultProtectedPatterns()
+	}
+	resolver := filesystem.NewResolver(absRoot, symlinkMode, protected)
+
+	routingEngine, err := buildRouter(cfg)
+	if err != nil {
+		return err
+	}
+
+	securityMode, err := policy.ParseMode(cfg.Security.Mode)
+	if err != nil {
+		return fmt.Errorf("security.mode: %w", err)
+	}
+
+	explainer := diagnostics.NewRequestExplainer(
+		resolver, routingEngine, policy.NewEngineForMode(securityMode), absRoot)
 	exp := explainer.Explain(req)
 
 	data, err := json.MarshalIndent(exp, "", "  ")

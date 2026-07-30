@@ -1,14 +1,21 @@
 package buildinfo
 
-import "time"
+import (
+	"runtime"
+	"time"
+)
 
-// These are set at build time via -ldflags.
+// These are set at build time via -ldflags. See LDFLAGS in the Makefile — the
+// symbol paths there must match this package, or the linker drops them without
+// complaint.
 var (
 	Version   = "dev"
 	Commit    = "unknown"
 	BuildDate = "unknown"
-	GoVersion = "unknown"
 )
+
+// GoVersion is not an ldflag target: the toolchain already knows it.
+var GoVersion = runtime.Version()
 
 // Info holds build metadata.
 type Info struct {
