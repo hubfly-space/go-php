@@ -15,15 +15,22 @@ type Switcher struct {
 	hookRunner *HookRunner
 	prober     *Prober
 	logger     *slog.Logger
+	extApply   ExtensionApplier
+}
+
+// ExtensionApplier applies extensions for a release.
+type ExtensionApplier interface {
+	ApplyReleaseExtensions(releaseID string, exts []ReleaseExtension) error
 }
 
 // NewSwitcher creates a deploy switcher.
-func NewSwitcher(releaseMgr *ReleaseManager, hookRunner *HookRunner, logger *slog.Logger) *Switcher {
+func NewSwitcher(releaseMgr *ReleaseManager, hookRunner *HookRunner, extApply ExtensionApplier, logger *slog.Logger) *Switcher {
 	return &Switcher{
 		releaseMgr: releaseMgr,
 		hookRunner: hookRunner,
 		prober:     &Prober{},
 		logger:     logger,
+		extApply:   extApply,
 	}
 }
 
@@ -45,7 +52,7 @@ type DeployStep struct {
 }
 
 // Deploy performs a full zero-downtime deploy cycle.
-func (s *Switcher) Deploy(ctx context.Context, version, runtimeID, srcDir string, metadata map[string]string) (*DeployResult, error) {
+func (s *Switcher) Deploy(ctx context.Context, version, runtimeID, srcDir string, metadata map[string]string, exts []ReleaseExtension) (*DeployResult, error) {
 	start := time.Now()
 	result := &DeployResult{}
 
@@ -55,6 +62,7 @@ func (s *Switcher) Deploy(ctx context.Context, version, runtimeID, srcDir string
 	if err != nil {
 		return nil, s.stepFail(result, step, "create release", err)
 	}
+	rel.Extensions = exts
 	result.Release = rel
 	s.stepComplete(result, step)
 
@@ -67,6 +75,18 @@ func (s *Switcher) Deploy(ctx context.Context, version, runtimeID, srcDir string
 		return nil, s.stepFail(result, step, "pre-activate hook", err)
 	}
 	s.stepComplete(result, step)
+
+	// Step 2.5: Apply extensions.
+	if len(exts) > 0 && s.extApply != nil {
+		step = s.stepStart("apply_extensions")
+		if err := s.extApply.ApplyReleaseExtensions(rel.ID, exts); err != nil {
+			rel.State = StateFailed
+			rel.Error = err.Error()
+			s.releaseMgr.saveRelease(rel)
+			return nil, s.stepFail(result, step, "apply extensions", err)
+		}
+		s.stepComplete(result, step)
+	}
 
 	// Step 3: Probe health.
 	step = s.stepStart("health_probe")

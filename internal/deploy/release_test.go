@@ -212,9 +212,9 @@ func TestDeploySwitcherDeploy(t *testing.T) {
 	os.WriteFile(filepath.Join(src, "index.php"), []byte("hi"), 0644)
 
 	hooks := NewHookRunner(HookConfig{})
-	switcher := NewSwitcher(mgr, hooks, nil)
+	switcher := NewSwitcher(mgr, hooks, nil, nil)
 
-	result, err := switcher.Deploy(context.Background(), "1.0.0", "runtime", src, nil)
+	result, err := switcher.Deploy(context.Background(), "1.0.0", "runtime", src, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,10 +244,10 @@ func TestDeploySwitcherRollback(t *testing.T) {
 	os.WriteFile(filepath.Join(src, "index.php"), []byte("hi"), 0644)
 
 	hooks := NewHookRunner(HookConfig{})
-	switcher := NewSwitcher(mgr, hooks, nil)
+	switcher := NewSwitcher(mgr, hooks, nil, nil)
 
-	r1, _ := switcher.Deploy(context.Background(), "1.0.0", "runtime", src, nil)
-	r2, _ := switcher.Deploy(context.Background(), "1.1.0", "runtime", src, nil)
+	r1, _ := switcher.Deploy(context.Background(), "1.0.0", "runtime", src, nil, nil)
+	r2, _ := switcher.Deploy(context.Background(), "1.1.0", "runtime", src, nil, nil)
 
 	result, err := switcher.Rollback(context.TODO())
 	if err != nil {

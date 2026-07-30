@@ -171,7 +171,7 @@ type DeployCLI struct {
 // Deploy performs a full deploy with optional canary.
 func (cli *DeployCLI) Deploy(ctx context.Context, version, runtimeID, srcDir string) (*DeployResult, error) {
 	cli.Logger.Info("deploying", "version", version, "runtime", runtimeID)
-	return cli.Switcher.Deploy(ctx, version, runtimeID, srcDir, nil)
+	return cli.Switcher.Deploy(ctx, version, runtimeID, srcDir, nil, nil)
 }
 
 // Rollback reverts to the previous release.

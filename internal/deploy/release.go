@@ -33,6 +33,13 @@ type Release struct {
 	Dir           string            `json:"dir"`
 	Metadata      map[string]string `json:"metadata,omitempty"`
 	Error         string            `json:"error,omitempty"`
+	Extensions    []ReleaseExtension `json:"extensions,omitempty"`
+}
+
+// ReleaseExtension describes an extension for a release.
+type ReleaseExtension struct {
+	Name string `json:"name"`
+	Type string `json:"type"` // "extension" or "zend_extension"
 }
 
 // ReleaseManager manages immutable releases for a project.
