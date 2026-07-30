@@ -10,11 +10,12 @@ import (
 func TestServerHealth(t *testing.T) {
 	status := NewStatusProvider("test")
 	cfg := *DefaultAdminConfig()
-	cfg.Token = "" // open
+	cfg.Token = "test-token"
 
 	srv := NewServer(cfg, nil, status)
 
 	req := httptest.NewRequest("GET", "/api/health", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, req)
 
@@ -23,6 +24,24 @@ func TestServerHealth(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "ok") {
 		t.Error("expected ok in response")
+	}
+}
+
+func TestServerFailsClosedWithoutToken(t *testing.T) {
+	// A server constructed with no token used to serve every endpoint to
+	// everyone. A missing token is a misconfiguration, not consent.
+	status := NewStatusProvider("test")
+	cfg := *DefaultAdminConfig()
+	cfg.Token = ""
+
+	srv := NewServer(cfg, nil, status)
+
+	for _, path := range []string{"/api/status", "/api/health", "/api/audit", "/api/metrics"} {
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != 401 {
+			t.Errorf("%s status = %d, want 401 when no token is configured", path, w.Code)
+		}
 	}
 }
 
@@ -64,11 +83,12 @@ func TestServerAuth(t *testing.T) {
 func TestServerStatus(t *testing.T) {
 	status := NewStatusProvider("test")
 	cfg := *DefaultAdminConfig()
-	cfg.Token = ""
+	cfg.Token = "test-token"
 
 	srv := NewServer(cfg, nil, status)
 
 	req := httptest.NewRequest("GET", "/api/status", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, req)
 
@@ -114,11 +134,12 @@ func TestRateLimiter(t *testing.T) {
 func TestServerAuditEndpoint(t *testing.T) {
 	status := NewStatusProvider("test")
 	cfg := *DefaultAdminConfig()
-	cfg.Token = ""
+	cfg.Token = "test-token"
 
 	srv := NewServer(cfg, nil, status)
 
 	req := httptest.NewRequest("GET", "/api/audit", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, req)
 
@@ -130,11 +151,12 @@ func TestServerAuditEndpoint(t *testing.T) {
 func TestServerMetricsEndpoint(t *testing.T) {
 	status := NewStatusProvider("test")
 	cfg := *DefaultAdminConfig()
-	cfg.Token = ""
+	cfg.Token = "test-token"
 
 	srv := NewServer(cfg, nil, status)
 
 	req := httptest.NewRequest("GET", "/api/metrics", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, req)
 

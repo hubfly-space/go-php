@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -73,6 +74,12 @@ func main() {
 		err = runDeploy(args)
 	case "php":
 		err = runPHP(args)
+	case "migrate":
+		err = runMigrate(args)
+	case "test":
+		err = runTest(args)
+	case "shadow":
+		err = runShadow(args)
 	case "incident":
 		err = runIncident(args)
 	case "service":
@@ -235,6 +242,7 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr str
 
 	// Start PHP-FPM.
 	var fpm *supervisor.Supervisor
+	var watchdog *supervisor.Watchdog
 	sockPath := cfg.PHP.SocketPath
 	if cfg.PHP.Binary != "" {
 		if sockPath == "" {
@@ -296,6 +304,20 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr str
 			PhpIni:         supIni,
 		})
 
+		// Apply OS-level isolation if configured. Tier 0 (no isolation) stays
+		// the default so existing setups are unaffected — §28.1 requires the
+		// claimed isolation level to be accurate, not maximal.
+		if cfg.PHP.Isolation.Mode != "" && cfg.PHP.Isolation.Mode != "none" {
+			isoCfg := supervisor.DefaultIsolationConfig()
+			isoCfg.Enabled = true
+			isoCfg.Mode = cfg.PHP.Isolation.Mode
+			isoCfg.User = cfg.PHP.Isolation.User
+			isoCfg.MemoryLimit = cfg.PHP.Isolation.MemoryLimit
+			isoCfg.PIDLimit = cfg.PHP.Isolation.PIDLimit
+			fpm.SetIsolator(supervisor.NewIsolator(isoCfg))
+			slog.Info("php-fpm isolation enabled", "mode", cfg.PHP.Isolation.Mode)
+		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := fpm.Start(ctx); err != nil {
@@ -303,6 +325,12 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr str
 		} else {
 			slog.Info("php-fpm started", "socket", sockPath)
 			defer fpm.Stop(context.Background())
+
+			// Supervise it. Without this loop, a php-fpm that dies leaves the
+			// state at StateReady and every PHP request fails forever with no
+			// attempt to recover (§16.5).
+			watchdog = supervisor.NewWatchdog(fpm, supervisor.DefaultWatchdogConfig(), slog.Default())
+			backgroundDone = append(backgroundDone, watchdog.Run(rootCtx))
 		}
 	}
 
@@ -336,6 +364,23 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr str
 			slog.Info("metrics endpoint",
 				"url", ui.FormatAddr(uiCfg.Addr)+cfg.Observability.Metrics.Path)
 		}
+
+		// The management API can create directories, start listeners on
+		// arbitrary ports, and activate releases. Binding it off loopback
+		// exposes all of that to the network, so say so loudly rather than
+		// letting a flag typo become a silent exposure.
+		if !isLoopbackAddr(uiCfg.Addr) {
+			slog.Warn("management UI is NOT bound to loopback; it is reachable from the network",
+				"addr", uiCfg.Addr)
+		}
+
+		// Print the token to stderr, not the structured log, so it is visible
+		// to whoever started the process without being swept into log
+		// aggregation.
+		fmt.Fprintf(os.Stderr, "\nManagement API token: %s\n", uiServer.Token())
+		fmt.Fprintf(os.Stderr, "  curl -H 'Authorization: Bearer %s' %s/api/status\n\n",
+			uiServer.Token(), ui.FormatAddr(uiCfg.Addr))
+
 		defer uiServer.Stop()
 	}
 
@@ -344,6 +389,7 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr str
 	handler := &gatewayHandler{
 		docRoot:  absRoot,
 		fpm:      fpm,
+		watchdog: watchdog,
 		sockPath: sockPath,
 		logger:   logger,
 	}
@@ -500,6 +546,25 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr str
 	return nil
 }
 
+// isLoopbackAddr reports whether a host:port binds only to loopback.
+//
+// An empty host means "all interfaces", which is the opposite of loopback — the
+// case most likely to be a mistake.
+func isLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "" {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // buildRouter converts config routes into a routing engine. It is shared by
 // serve and explain so that a trace reflects the routing the server would
 // actually perform.
@@ -537,6 +602,7 @@ type serveState struct {
 type gatewayHandler struct {
 	docRoot  string
 	fpm      *supervisor.Supervisor
+	watchdog *supervisor.Watchdog
 	sockPath string
 	logger   *slog.Logger
 
@@ -548,6 +614,22 @@ type gatewayHandler struct {
 // concurrent reload cannot change the configuration mid-request.
 func (h *gatewayHandler) current() *serveState {
 	return h.state.Load()
+}
+
+// phpAvailable reports whether PHP requests can be served right now.
+//
+// When the watchdog's restart circuit is open, php-fpm is known to be failing
+// repeatedly. §16.5 wants static files to keep being served and PHP routes to
+// return a stable status in that window, rather than each request rediscovering
+// the outage as a fresh connection error.
+func (h *gatewayHandler) phpAvailable() bool {
+	if h.fpm == nil || h.fpm.State() != supervisor.StateReady {
+		return false
+	}
+	if h.watchdog != nil && h.watchdog.CircuitOpen() {
+		return false
+	}
+	return true
 }
 
 // reload rebuilds the request-path components from a config file and swaps them
@@ -646,10 +728,15 @@ func (h *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Check if the path should be routed to PHP-FPM.
 	if strings.HasSuffix(normalized, ".php") {
-		if h.fpm != nil && h.fpm.State() == supervisor.StateReady {
+		if h.phpAvailable() {
 			h.servePHP(w, r, st, normalized, reqID, start)
 			return
 		}
+		// An explicit .php request with no backend is a backend outage, not a
+		// missing file. Saying 404 here would send operators looking in the
+		// wrong place.
+		h.phpUnavailable(w, r, reqID, start)
+		return
 	}
 
 	// Check for static file.
@@ -660,8 +747,8 @@ func (h *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try PHP (for SCRIPT_FILENAME style execution).
-	if h.fpm != nil && h.fpm.State() == supervisor.StateReady {
+	// Try PHP (front-controller fallback).
+	if h.phpAvailable() {
 		h.servePHP(w, r, st, normalized, reqID, start)
 		return
 	}
@@ -681,6 +768,23 @@ func (h *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.devError(w, r, 404, "Not Found", "The requested resource was not found.", reqID, start)
+}
+
+// phpUnavailable reports a PHP backend outage with a stable status and a
+// Retry-After, so clients and proxies back off instead of hammering a backend
+// that is known to be down (§16.5).
+func (h *gatewayHandler) phpUnavailable(w http.ResponseWriter, r *http.Request, reqID string, start time.Time) {
+	reason := "PHP backend is not available."
+	if h.watchdog != nil && h.watchdog.CircuitOpen() {
+		reason = "PHP backend is restarting repeatedly and has been temporarily taken out of service."
+	} else if h.fpm != nil {
+		if err := h.fpm.LastFailure(); err != nil {
+			h.logger.Warn("php unavailable", "request_id", reqID, "error", err)
+		}
+	}
+
+	w.Header().Set("Retry-After", "30")
+	h.devError(w, r, http.StatusServiceUnavailable, "Service Unavailable", reason, reqID, start)
 }
 
 func (h *gatewayHandler) serveStatic(w http.ResponseWriter, r *http.Request, st *serveState, rf *filesystem.ResolvedFile, reqID string, start time.Time) {

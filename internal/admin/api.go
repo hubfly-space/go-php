@@ -71,7 +71,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Auth.
-	if !s.authenticate(r) {
+	if !s.Authenticate(r) {
 		s.audit.Log("auth_failed", r.RemoteAddr, r.URL.Path)
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
@@ -81,9 +81,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
 }
 
-func (s *Server) authenticate(r *http.Request) bool {
+// Authenticate reports whether a request carries a valid bearer token.
+//
+// A missing token configuration fails closed. It used to return true, meaning a
+// server constructed without a token was wide open — the failure mode where a
+// misconfiguration produces no error and no warning, only silent exposure.
+// §5.6 requires unsafe options to be explicit and to produce warnings; an empty
+// token is not an opt-in to anything.
+func (s *Server) Authenticate(r *http.Request) bool {
 	if s.cfg.Token == "" {
-		return true // no token configured = open
+		return false
 	}
 
 	auth := r.Header.Get("Authorization")
@@ -94,6 +101,7 @@ func (s *Server) authenticate(r *http.Request) bool {
 	token := strings.TrimPrefix(auth, "Bearer ")
 	return subtle.ConstantTimeCompare([]byte(token), []byte(s.cfg.Token)) == 1
 }
+
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
