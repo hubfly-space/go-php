@@ -17,6 +17,16 @@ var staticFiles embed.FS
 type ServerConfig struct {
 	Addr     string `yaml:"addr"`
 	SockPath string `yaml:"sock_path"`
+
+	// MetricsPath, when non-empty, serves MetricsHandler at that path. Metrics
+	// live on this listener rather than the public one because §5.5 requires
+	// the control plane and data plane to stay separate — an exposed /metrics
+	// on the app port leaks request volume and route names to anyone.
+	MetricsPath string
+
+	// MetricsHandler serves the Prometheus exposition. Nil disables the
+	// endpoint.
+	MetricsHandler http.Handler
 }
 
 // DefaultConfig returns sensible defaults.
@@ -75,6 +85,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/deploy/activate", s.handleDeployActivate)
 	s.mux.HandleFunc("/api/deploy/rollback", s.handleDeployRollback)
 	s.mux.HandleFunc("/api/metrics/history", s.handleMetricsHistory)
+
+	if s.cfg.MetricsPath != "" && s.cfg.MetricsHandler != nil {
+		s.mux.Handle(s.cfg.MetricsPath, s.cfg.MetricsHandler)
+	}
 
 	// Static files
 	staticFS, err := fs.Sub(staticFiles, "static")

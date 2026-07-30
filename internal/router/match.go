@@ -19,6 +19,26 @@ type Route struct {
 	Headers    map[string]string
 }
 
+// Label returns a stable identifier for the route, suitable as a metrics label.
+//
+// It is derived from the route's configured pattern rather than the request
+// path, which is what keeps metric cardinality bounded by the size of the route
+// table instead of by client behavior (§32.3).
+func (r *Route) Label() string {
+	switch {
+	case r.Path != "":
+		return r.Path
+	case r.PathPrefix != "":
+		return r.PathPrefix + "*"
+	case r.Regex != "":
+		return "re:" + r.Regex
+	case r.Host != "":
+		return "host:" + r.Host
+	default:
+		return "route"
+	}
+}
+
 // Engine matches requests against routes.
 type Engine struct {
 	routes []Route

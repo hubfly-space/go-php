@@ -1,10 +1,19 @@
 package policy
 
 import (
+	"context"
+	"fmt"
+	"net"
 	"net/http"
 	"sync"
 	"time"
 )
+
+// maxBuckets caps how many distinct client keys a limiter tracks. §24.3: "Do
+// not use unbounded client-key maps." Once the cap is hit, new keys are refused
+// admission rather than allocated — an attacker spraying keys degrades into
+// being rate limited, which is the safe direction.
+const maxBuckets = 100_000
 
 // RateLimiter implements token bucket rate limiting.
 type RateLimiter struct {
@@ -38,6 +47,11 @@ func (rl *RateLimiter) Allow(key string) bool {
 
 	b, ok := rl.buckets[key]
 	if !ok {
+		if len(rl.buckets) >= maxBuckets {
+			// Refuse rather than grow. Allocating here is what turns a key
+			// spray into a memory exhaustion primitive.
+			return false
+		}
 		maxTokens := float64(rl.burst)
 		if maxTokens < 1 {
 			maxTokens = float64(rl.rate)
@@ -78,6 +92,13 @@ func (rl *RateLimiter) Cleanup() {
 			delete(rl.buckets, k)
 		}
 	}
+}
+
+// Buckets returns the number of tracked client keys.
+func (rl *RateLimiter) Buckets() int {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	return len(rl.buckets)
 }
 
 // BucketStatus returns the current state of a bucket.
@@ -134,18 +155,75 @@ func (prl *PerRouteLimiter) Allow(route, clientIP string) bool {
 	return true
 }
 
+// Cleanup evicts stale buckets from the global limiter and every route limiter.
+func (prl *PerRouteLimiter) Cleanup() {
+	prl.global.Cleanup()
+
+	prl.mu.RLock()
+	limiters := make([]*RateLimiter, 0, len(prl.limiters))
+	for _, l := range prl.limiters {
+		limiters = append(limiters, l)
+	}
+	prl.mu.RUnlock()
+
+	for _, l := range limiters {
+		l.Cleanup()
+	}
+}
+
+// StartCleanup evicts stale buckets on an interval until ctx is canceled, and
+// returns a channel closed when the goroutine has exited.
+//
+// §24.3 requires bounded client-key state. Without this loop the bucket map
+// only ever grows, so wiring the limiter without calling this trades a rate
+// limit for a memory leak.
+func (prl *PerRouteLimiter) StartCleanup(ctx context.Context, interval time.Duration) <-chan struct{} {
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				prl.Cleanup()
+			}
+		}
+	}()
+
+	return done
+}
+
+// ClientKey derives the rate limiting key for a request.
+//
+// It deliberately uses the transport peer address and ignores X-Forwarded-For.
+// Trusting that header without validating the peer against a trusted-proxy list
+// (§10.3, not yet implemented) would let any client mint a fresh bucket per
+// request by varying the header, which removes the rate limit entirely.
+//
+// The port is stripped, because otherwise every new connection from one client
+// gets its own bucket.
+func ClientKey(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
 // Middleware returns an HTTP middleware that rate-limits requests.
 func (prl *PerRouteLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		key := r.URL.Path
-		clientIP := r.RemoteAddr
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			clientIP = xff
-		}
-
-		if !prl.Allow(key, clientIP) {
+		if !prl.Allow(r.URL.Path, ClientKey(r)) {
 			w.Header().Set("Retry-After", "60")
-			http.Error(w, `{"error":"rate limited"}`, http.StatusTooManyRequests)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			fmt.Fprint(w, `{"error":"rate limited"}`)
 			return
 		}
 
