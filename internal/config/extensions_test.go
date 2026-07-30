@@ -96,8 +96,30 @@ func TestResolveExtensionsEmpty(t *testing.T) {
 	if resolved != nil {
 		t.Errorf("expected nil resolved, got %v", resolved)
 	}
-	if ini == nil {
-		t.Error("expected non-nil ini")
+	if ini != nil {
+		t.Errorf("expected nil ini, got %v", ini)
+	}
+}
+
+func TestResolveExtensionsWithIniSettings(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.PHP.ExtensionProfile = "web-standard"
+	cfg.PHP.PhpIni = []IniSetting{
+		{Name: "memory_limit", Value: "256M"},
+	}
+
+	resolved, ini, err := ResolveExtensions(&cfg.PHP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved) == 0 {
+		t.Error("expected resolved extensions")
+	}
+	if len(ini) != 1 {
+		t.Fatalf("expected 1 ini setting, got %d", len(ini))
+	}
+	if ini[0].Name != "memory_limit" || ini[0].Value != "256M" {
+		t.Errorf("unexpected ini: %+v", ini[0])
 	}
 }
 
