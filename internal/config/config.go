@@ -70,6 +70,29 @@ type PHPConfig struct {
 	ExtensionProfile string            `yaml:"extension_profile"`
 	Extensions       []ExtensionConfig `yaml:"extensions"`
 	PhpIni           []IniSetting      `yaml:"php_ini"`
+	Isolation        IsolationConfig   `yaml:"isolation"`
+}
+
+// IsolationConfig selects the OS-level isolation tier for php-fpm (§28.1).
+//
+// The default is Tier 0 — no isolation. §28.1 requires the *claimed* isolation
+// level to be accurate: "The project must not claim safe untrusted
+// multi-tenancy at Tier 0 or Tier 1." Raising this to "namespace" or "cgroup"
+// does not by itself make the gateway safe for untrusted tenants.
+type IsolationConfig struct {
+	// Mode is one of "none", "process", "namespace", or "cgroup".
+	Mode string `yaml:"mode"`
+
+	// User drops privileges for the php-fpm process. There is deliberately no
+	// group key: the isolator resolves the group from the user, and a config
+	// field that silently does nothing is worse than its absence.
+	User string `yaml:"user"`
+
+	// MemoryLimit is a cgroup v2 memory cap, e.g. "512M".
+	MemoryLimit string `yaml:"memory_limit"`
+
+	// PIDLimit caps the number of processes in the cgroup.
+	PIDLimit int `yaml:"pid_limit"`
 }
 
 // ExtensionConfig defines a single PHP extension configuration.

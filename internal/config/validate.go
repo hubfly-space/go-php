@@ -73,6 +73,25 @@ func Validate(cfg *Config) error {
 		seenExt[ext.Name] = true
 	}
 
+	// Validate isolation.
+	switch cfg.PHP.Isolation.Mode {
+	case "", "none":
+		cfg.PHP.Isolation.Mode = "none"
+	case "process", "namespace", "cgroup":
+		// ok
+	default:
+		return fmt.Errorf("php.isolation.mode must be one of 'none', 'process', 'namespace', 'cgroup', got %q",
+			cfg.PHP.Isolation.Mode)
+	}
+	if cfg.PHP.Isolation.MemoryLimit != "" {
+		if _, err := ParseByteSize(cfg.PHP.Isolation.MemoryLimit); err != nil {
+			return fmt.Errorf("php.isolation.memory_limit: %w", err)
+		}
+	}
+	if cfg.PHP.Isolation.PIDLimit < 0 {
+		return fmt.Errorf("php.isolation.pid_limit cannot be negative")
+	}
+
 	// Validate per-route extension overrides.
 	for i, route := range cfg.Routes {
 		if route.ExtensionOverride != nil {

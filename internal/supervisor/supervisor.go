@@ -5,11 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -28,8 +30,8 @@ const (
 
 // Config holds FPM pool configuration.
 type Config struct {
-	PHPBinary      string       // Path to php-fpm binary
-	SocketPath     string       // Unix socket path
+	PHPBinary      string // Path to php-fpm binary
+	SocketPath     string // Unix socket path
 	PIDFile        string
 	MaxChildren    int
 	StartServers   int
@@ -64,11 +66,52 @@ type Supervisor struct {
 	mu     sync.Mutex
 	state  State
 	cancel context.CancelFunc
+
+	// exited is closed by the reaper goroutine when the child process is
+	// observed to exit, and exitErr holds why. Without this, a php-fpm that
+	// dies leaves the state at StateReady forever and the gateway keeps
+	// dialing a socket nobody is listening on.
+	exited  chan struct{}
+	exitErr error
+
+	// isolator, when set, applies OS-level isolation to the child before it
+	// starts.
+	isolator *Isolator
+
+	// lastFailure records why the last start or health check failed, for
+	// operator-facing status.
+	lastFailure error
 }
 
 // New creates a new Supervisor.
 func New(cfg Config) *Supervisor {
 	return &Supervisor{cfg: cfg, state: StateAbsent}
+}
+
+// SetIsolator installs OS-level isolation applied to php-fpm at start.
+//
+// §28.1 is explicit that isolation is tiered and that the project must not
+// claim safe untrusted multi-tenancy at the lower tiers. A nil isolator means
+// Tier 0: no isolation.
+func (s *Supervisor) SetIsolator(iso *Isolator) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.isolator = iso
+}
+
+// LastFailure returns the most recent start or health-check failure, or nil.
+func (s *Supervisor) LastFailure() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastFailure
+}
+
+// setFailure records a failure reason alongside a state transition.
+func (s *Supervisor) setFailure(state State, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.state = state
+	s.lastFailure = err
 }
 
 // State returns the current state.
@@ -104,27 +147,67 @@ func (s *Supervisor) Start(ctx context.Context) error {
 		return fmt.Errorf("supervisor: generate config: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
+	// The caller's ctx bounds how long we wait for readiness. The child's
+	// lifetime must NOT be tied to it: with exec.CommandContext(ctx, ...) and a
+	// caller passing context.WithTimeout(..., 10*time.Second), php-fpm was
+	// killed ten seconds after every successful start. Stop owns the kill
+	// switch instead.
+	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	s.cancel = cancel
 
-	cmd := exec.CommandContext(ctx, s.cfg.PHPBinary, "--fpm-config", configPath)
+	cmd := exec.CommandContext(runCtx, s.cfg.PHPBinary, "--fpm-config", configPath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+
+	// Apply OS isolation before the process exists. This is the call that was
+	// missing: internal/supervisor/isolation.go was fully implemented, tested,
+	// and referenced by nothing, so the documented isolation tiers shipped as
+	// unreachable code.
+	s.mu.Lock()
+	iso := s.isolator
+	s.mu.Unlock()
+	if iso != nil {
+		if err := iso.ApplyIsolation(cmd); err != nil {
+			cancel()
+			s.setFailure(StateFailed, err)
+			return fmt.Errorf("supervisor: apply isolation: %w", err)
+		}
+	}
+
+	s.mu.Lock()
 	s.cmd = cmd
+	exited := make(chan struct{})
+	s.exited = exited
+	s.exitErr = nil
+	s.mu.Unlock()
 
 	if err := cmd.Start(); err != nil {
-		s.setState(StateFailed)
+		cancel()
+		s.setFailure(StateFailed, err)
 		return fmt.Errorf("supervisor: start php-fpm: %w", err)
 	}
+
+	// One reaper per process. Wait must be called exactly once, so Stop and
+	// HealthCheck both consult this instead of calling Wait themselves.
+	go func() {
+		err := cmd.Wait()
+		s.mu.Lock()
+		s.exitErr = err
+		s.mu.Unlock()
+		close(exited)
+	}()
 
 	// Wait for socket to appear.
 	if err := s.waitForSocket(ctx, 10*time.Second); err != nil {
 		s.Stop(context.Background())
-		s.setState(StateFailed)
+		s.setFailure(StateFailed, err)
 		return fmt.Errorf("supervisor: wait for socket: %w", err)
 	}
 
-	s.setState(StateReady)
+	s.mu.Lock()
+	s.state = StateReady
+	s.lastFailure = nil
+	s.mu.Unlock()
 	return nil
 }
 
@@ -138,22 +221,34 @@ func (s *Supervisor) Stop(ctx context.Context) error {
 	s.state = StateStopping
 	s.mu.Unlock()
 
-	if s.cancel != nil {
-		s.cancel()
+	s.mu.Lock()
+	cmd, exited := s.cmd, s.exited
+	s.mu.Unlock()
+
+	if cmd != nil && cmd.Process != nil && exited != nil {
+		// Ask php-fpm to shut down gracefully first. SIGTERM lets the master
+		// drain and reap its workers; going straight to SIGKILL (which is what
+		// cancelling the exec context does) orphans them (§16.6).
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+
+		// The reaper started in Start owns cmd.Wait; waiting on its channel
+		// here avoids a second Wait, which would return an error and leave the
+		// child unreaped.
+		select {
+		case <-exited:
+		case <-ctx.Done():
+			// Graceful shutdown ran out of time; force it.
+			if s.cancel != nil {
+				s.cancel()
+			}
+			_ = cmd.Process.Kill()
+			<-exited
+		}
 	}
 
-	if s.cmd != nil && s.cmd.Process != nil {
-		done := make(chan error, 1)
-		go func() {
-			done <- s.cmd.Wait()
-		}()
-
-		select {
-		case <-done:
-		case <-ctx.Done():
-			s.cmd.Process.Kill()
-			<-done
-		}
+	// Release the exec context regardless of which path we took.
+	if s.cancel != nil {
+		s.cancel()
 	}
 
 	// Clean up socket and PID files.
@@ -165,13 +260,37 @@ func (s *Supervisor) Stop(ctx context.Context) error {
 }
 
 // HealthCheck verifies the FPM process is alive and the socket is responsive.
+//
+// §16.4 lists seven readiness checks; this implements the first three (child
+// alive, socket exists, socket accepts a connection). The remaining four —
+// socket ownership, a minimal FastCGI health request, PHP version match, and
+// extension verification — are tracked in ROADMAP.md.
 func (s *Supervisor) HealthCheck(ctx context.Context) error {
 	s.mu.Lock()
 	state := s.state
+	exited := s.exited
 	s.mu.Unlock()
 
 	if state != StateReady {
-		return errors.New("supervisor: not ready")
+		return fmt.Errorf("supervisor: not ready (state %s)", state)
+	}
+
+	// Has the child died? "A process existing is not sufficient" (§16.4), and
+	// neither is a process that has stopped existing going unnoticed.
+	if exited != nil {
+		select {
+		case <-exited:
+			// Read the reason only once exit is observed; reading it earlier
+			// could catch a nil written before the reaper stored the error.
+			s.mu.Lock()
+			exitErr := s.exitErr
+			s.mu.Unlock()
+			if exitErr != nil {
+				return fmt.Errorf("supervisor: php-fpm exited: %w", exitErr)
+			}
+			return errors.New("supervisor: php-fpm exited")
+		default:
+		}
 	}
 
 	// Check socket exists.
@@ -182,6 +301,15 @@ func (s *Supervisor) HealthCheck(ctx context.Context) error {
 	if info == nil {
 		return errors.New("supervisor: socket stat nil")
 	}
+
+	// A socket file that nobody is accepting on looks identical to a healthy
+	// one from Stat alone, so actually connect.
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "unix", s.cfg.SocketPath)
+	if err != nil {
+		return fmt.Errorf("supervisor: socket not accepting: %w", err)
+	}
+	conn.Close()
 
 	return nil
 }
@@ -222,11 +350,11 @@ var knownBuiltinExtensions = map[string]bool{
 // Entries with a lower priority value load first. Core/dependency extensions
 // get priority 10, loadable extensions get priority 20.
 var extensionLoadPriority = map[string]int{
-	"mysqlnd":  1,
-	"pdo":      2,
-	"sqlite3":  3,
-	"mysqli":   10,
-	"pdo_mysql": 11,
+	"mysqlnd":    1,
+	"pdo":        2,
+	"sqlite3":    3,
+	"mysqli":     10,
+	"pdo_mysql":  11,
 	"pdo_sqlite": 12,
 }
 
