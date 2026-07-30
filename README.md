@@ -29,7 +29,11 @@ go build -o gateway ./cmd/gateway
 ```bash
 ./gateway serve . --php-fpm /run/php/php-fpm.sock
 ```
+### Run (with go)
 
+```bash
+go run ./cmd/gateway serve . --php-fpm /usr/sbin/php-fpm8.3
+```
 ## Architecture
 
 ```
