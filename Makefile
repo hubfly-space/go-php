@@ -9,7 +9,12 @@ BUILD_DIR := ./bin
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
-LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.buildDate=$(BUILD_DATE)"
+# These must name the package that actually declares the variables. The linker
+# silently ignores an -X whose symbol does not exist, so pointing these at
+# `main` (which declares none of them) made `gateway version` always print
+# "dev" with no error anywhere.
+BUILDINFO := github.com/go-php/gateway/internal/buildinfo
+LDFLAGS := -ldflags "-X $(BUILDINFO).Version=$(VERSION) -X $(BUILDINFO).Commit=$(COMMIT) -X $(BUILDINFO).BuildDate=$(BUILD_DATE)"
 
 # Default target
 all: build

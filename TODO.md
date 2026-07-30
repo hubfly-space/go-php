@@ -3,6 +3,18 @@
 > Track what's done, what's in progress, and what's next.
 > Mark items with `[x]` when complete, `[ ]` when pending, `[-]` when skipped/blocked.
 
+> **A note on what `[x]` means here.** A checked box in this file means the code was *written and
+> tested*, not that it is reachable from the running binary. Those are currently different things:
+> roughly a third of `internal/` is complete, well covered, and never constructed by `main`. See
+> [ROADMAP.md](ROADMAP.md) for the full list. Where a checked item is written-but-unwired, it is
+> annotated `[unwired]` below.
+
+> **Untracked work.** Several subsystems the spec requires have no entry anywhere in this file —
+> trusted proxies (§10.3), request framing hardening (§10.4), the upload pipeline (§25), the state
+> store (§38), the reverse proxy and WebSockets (§31), the Windows backend (§17), per-route PHP
+> runtimes (§33.9), and safe deployment replay (§33.8). They are catalogued in
+> [ROADMAP.md](ROADMAP.md) rather than duplicated here.
+
 ---
 
 ## Phase 0: Architecture Prototypes
@@ -13,8 +25,8 @@
 - [x] Initialize Go module (`go mod init`) — `github.com/go-php/gateway`
 - [x] Create directory structure per spec §7 — all `internal/`, `cmd/`, `pkg/`, `test/`, `docs/` dirs created
 - [x] Set up `.golangci.yml` — errcheck, govet, staticcheck, unused, gosimple, ineffassign, misspell, unconvert, gocritic, gofmt, goimports
-- [ ] Set up `Makefile` or task runner
-- [ ] Set up CI pipeline (GitHub Actions)
+- [x] Set up `Makefile` or task runner — build, install, run, cross-compile, 7 test targets, fmt/vet/lint/coverage
+- [x] Set up CI pipeline (GitHub Actions) — `ci.yml`, `e2e.yml`, `fuzz.yml`, `tests.yml`
 - [x] Add build info package (`internal/buildinfo/`) — version, commit, build date, go version
 
 ### Error Foundation
@@ -250,22 +262,31 @@
 - [ ] Separate PHP pools per project
 
 ### HTTPS / TLS
-- [x] Static certificate files — `CertManager.LoadCert()`, `LoadCertDir()`
-- [x] Automatic ACME (Let's Encrypt) — `internal/tls/acme.go` (ACMEManager, HTTPChallenge, self-signed fallback, cert caching)
-- [ ] Atomic certificate renewal
-- [x] Secure private key permissions — loaded via `tls.LoadX509KeyPair`
-- [x] SNI routing — `CertManager.GetCertificate()` with wildcard matching
-- [x] HTTP-to-HTTPS redirect — `RedirectHandler()` with 301
+> **The whole of `internal/tls` is unwired.** `main.go` only ever calls `ListenAndServe`, so the
+> gateway cannot serve HTTPS at all. Every `[x]` in this section is library code with no listener.
+- [x] Static certificate files — `CertManager.LoadCert()`, `LoadCertDir()` `[unwired]`
+- [ ] Automatic ACME (Let's Encrypt) — **`acme.go:48` never contacts an ACME server**; it calls `generateSelfSigned` and returns that under a Let's Encrypt-shaped API. Needs a real implementation (e.g. `x/crypto/acme/autocert`) before the mode is offered
+- [ ] Fix `acme.go:235` — slices `r.URL.Path[len(prefix):]` with no prefix check; a short request panics the server
+- [ ] Atomic certificate renewal — plus §30.2 renewal jitter, persistent cert state, rate-limit-aware retry, concurrent renewal
+- [x] Secure private key permissions — loaded via `tls.LoadX509KeyPair` `[unwired]`
+- [x] SNI routing — `CertManager.GetCertificate()` with wildcard matching `[unwired]`
+- [x] HTTP-to-HTTPS redirect — `RedirectHandler()` with 301 `[unwired]`
 - [x] Unit tests: SNI selection, wildcard match, default cert, load dir, redirect handler
 
 ### Admin API
-- [x] Bind to `127.0.0.1` only by default — `DefaultAdminConfig().Addr = "127.0.0.1:9090"`
-- [x] Local token authentication (constant-time comparison) — `crypto/subtle.ConstantTimeCompare`
-- [x] CSRF protection — `internal/admin/csrf.go` (CSRFProtect, GenerateToken, Consume, SecurityMiddleware, Origin validation)
-- [x] Rate limit authentication attempts — per-IP token bucket
-- [x] Endpoints: status, config validate, runtimes, metrics, audit, health
-- [ ] Long-running operation IDs
-- [x] Audit log all operations — `AuditLog` with timestamp, action, remote, path
+> **`internal/admin` has zero importers.** The API that actually runs is `internal/ui`, which has no
+> auth, no CSRF, no origin check, and no security headers — and can start listeners on arbitrary
+> ports serving arbitrary directories with PHP enabled. This is the most severe open item in the
+> repo; see the security section of [ROADMAP.md](ROADMAP.md).
+- [x] Bind to `127.0.0.1` only by default — `DefaultAdminConfig().Addr = "127.0.0.1:9090"` `[unwired]`
+- [x] Local token authentication (constant-time comparison) — `crypto/subtle.ConstantTimeCompare` `[unwired]`
+- [ ] Make auth fail-closed — `api.go:85-87` returns `true` when no token is configured
+- [ ] CSRF protection — `internal/admin/csrf.go` exists but **hand-rolls SHA-256** (its own comment says "placeholder"), encodes the length suffix in bytes rather than bits, and `Validate`/`Consume` never verify the MAC. Replace with `crypto/hmac` + `crypto/sha256` **before** wiring
+- [x] Rate limit authentication attempts — per-IP token bucket `[unwired]`
+- [x] Endpoints: status, config validate, runtimes, metrics, audit, health `[unwired]` — note `handleConfigValidate` is a stub returning `{"status":"valid"}`
+- [ ] Long-running operation IDs — plus §36.4 SSE progress streaming
+- [ ] §36.3 separate read and write scopes, token rotation, short-lived operation tokens
+- [x] Audit log all operations — `AuditLog` with timestamp, action, remote, path `[unwired]`
 
 ### Service Mode
 - [ ] `gateway start`, `gateway stop`, `gateway reload`, `gateway status`
@@ -273,16 +294,23 @@
 - [x] Graceful shutdown sequence — wired in `cmd/gateway/main.go` via SIGINT/SIGTERM
 
 ### Configuration Reload
-- [x] Validate new config before activation — `Reloader.Reload()` calls `Validate()`
-- [x] Build candidate snapshot — `Snapshot` struct with version and timestamp
-- [x] Atomic pointer swap — `atomic.Pointer[Snapshot]` in `internal/config/reload.go`
-- [x] Drain old state after swap — `Drainable` interface, `ReloadWithDrain()`
-- [x] Never replace known-good state with unvalidated config — validate-then-swap
+> **`internal/config/reload.go` has no consumer.** There is no SIGHUP handler and no file watcher, so
+> config cannot be reloaded at all; `gatewayHandler` captures `cfg` once at startup.
+- [ ] Add a SIGHUP handler and read config through the snapshot rather than a captured pointer
+- [x] Validate new config before activation — `Reloader.Reload()` calls `Validate()` `[unwired]`
+- [x] Build candidate snapshot — `Snapshot` struct with version and timestamp `[unwired]`
+- [x] Atomic pointer swap — `atomic.Pointer[Snapshot]` in `internal/config/reload.go` `[unwired]`
+- [x] Drain old state after swap — `Drainable` interface, `ReloadWithDrain()` `[unwired]`
+- [x] Never replace known-good state with unvalidated config — validate-then-swap `[unwired]`
 
 ### Observability (Production)
-- [x] Structured access logs with all fields — `internal/observability/access.go`
-- [x] Prometheus metrics (§32.3) — `internal/observability/metrics.go` with histograms, counters, gauges
-- [x] OpenTelemetry tracing (§32.4) — `internal/observability/tracing.go` (Tracer, Span, TraceID, SpanID, TraceMiddleware, event logging)
+- [x] Structured access logs with all fields — `internal/observability/access.go` (the only observability file that is wired)
+- [ ] Wire secret redaction — `SecretRedactor` exists and nothing installs it, so **the access log is currently unredacted**
+- [x] Prometheus metrics (§32.3) — `internal/observability/metrics.go` `[unwired]` — **no `/metrics` endpoint is served**
+- [ ] Fix metrics before exposing: `:51` keys histograms by raw request path (unbounded cardinality, forbidden by §32.3) and `:132` emits the path as an unescaped label, so `/a"}x{y="` corrupts the exposition format
+- [x] OpenTelemetry tracing (§32.4) — `internal/observability/tracing.go` `[unwired]`
+- [ ] Schedule `Tracer.Cleanup` before wiring — `tracing.go:44` is an unbounded `map[TraceID][]*Span`
+- [ ] §32.4 propagate trace context into PHP via controlled env vars/headers
 - [x] `gateway doctor` diagnostics — `internal/diagnostics/doctor.go` (binary checks, port availability, PID limit, open files, disk space)
 - [ ] `gateway status --verbose`
 - [ ] `gateway inspect request <id>`
@@ -291,17 +319,20 @@
 
 ### Resource Limits
 - [ ] Request header limits
-- [ ] Request body limits
-- [ ] Multipart limits
+- [ ] Request body limits — `security.max_body_size` is a `string` field nothing ever parses; `servePHP` hardcodes 20 MiB (`main.go:475`)
+- [ ] Multipart limits — and the whole of §25 upload security
 - [ ] Concurrency limits (per-project, per-PHP, per-client)
-- [ ] Queue limits with backpressure
-- [x] Timeout configuration — `ServerConfig.WriteTimeout`, `PHPConfig.RequestTimeout`
+- [ ] Queue limits with backpressure — §24.2 bounded queue, 503/429 with `Retry-After`, health-route prioritization
+- [x] Timeout configuration — `ServerConfig.WriteTimeout`, `PHPConfig.RequestTimeout` — but `RequestTimeout` only reaches the generated FPM conf; the Go side hardcodes 60s (`main.go:478`)
 
 ### Rate Limiting
-- [x] Token bucket per client — `RateLimiter` in `internal/policy/ratelimit.go`
-- [x] Per route — `PerRouteLimiter.SetRoute()`
-- [x] Global emergency limit — `PerRouteLimiter` with global bucket
-- [x] Evict inactive entries, cap state — `RateLimiter.Cleanup()` removes 5min stale buckets
+> **Nothing constructs a rate limiter at runtime.** `internal/policy` is imported only by
+> `diagnostics/explain.go`, which builds an *empty* engine — so the explain trace always says "allow".
+- [ ] Wire `PerRouteLimiter.Middleware` into the request chain and schedule `Cleanup` on a ticker
+- [x] Token bucket per client — `RateLimiter` in `internal/policy/ratelimit.go` `[unwired]`
+- [x] Per route — `PerRouteLimiter.SetRoute()` `[unwired]`
+- [x] Global emergency limit — `PerRouteLimiter` with global bucket `[unwired]`
+- [x] Evict inactive entries, cap state — `RateLimiter.Cleanup()` removes 5min stale buckets `[unwired]`
 
 ### Exit Criteria — Phase 3
 - [ ] Load tests pass
@@ -325,9 +356,11 @@
 - [x] Blue/green pool model — `Switcher.Deploy()` creates, probes, activates, drains
 - [x] Install candidate → generate config → start → probe → activate → drain old
 - [x] Atomic routing via snapshot swap — symlink swap in `ReleaseManager.Activate()`
-- [x] Health checks: PHP version, extensions, FastCGI, application /health — `Prober.Probe()`
-- [x] Rollback on failure — `Switcher.Rollback()`, `ReleaseManager.Rollback()`
-- [x] Canary switching (optional, advanced) — `internal/deploy/canary.go` (CanarySwitcher, StartCanary, IncreaseWeight, Promote, Rollback, ShouldRouteToCanary)
+- [ ] Health checks: PHP version, extensions, FastCGI, application /health — **`Prober.Probe()` (`switcher.go:161`) always returns `true`**; the gate cannot fail, and it does not verify the release structure either
+- [x] Rollback on failure — `Switcher.Rollback()`, `ReleaseManager.Rollback()` `[unwired]`
+- [ ] Fix `ReleaseManager.Rollback` locking (`release.go:221-225` unlocks mid-function under a deferred unlock)
+- [x] Canary switching (optional, advanced) — `internal/deploy/canary.go` `[unwired]`
+- [ ] Fix canary weighting — `randomInt` is `time.Now().UnixNano() % 100` (`canary.go:161`), a clock LSB rather than a uniform draw, so bursty traffic routes in correlated blocks. §21.5 also wants stable request hashing
 
 ### Deploy Hooks
 - [x] Pre/post activate hooks (argument arrays, not shell strings) — `HookRunner` with `HookConfig`
@@ -337,10 +370,13 @@
 - [x] Never run hooks from untrusted HTTP requests — hooks only run via `Switcher.Deploy()`
 
 ### Deploy CLI
-- [x] `gateway deploy create` — `DeployCLI.Deploy()` with full zero-downtime cycle
-- [x] `gateway deploy activate <release>` — `Switcher.Deploy()` with pre/post hooks
-- [x] `gateway deploy rollback` — `DeployCLI.Rollback()` + `CanarySwitcher.Rollback()`
-- [x] `gateway deploy list` — `DeployCLI.Status()` with SwitcherStatus
+> The CLI reaches `ReleaseManager` only. `Switcher`, `CanarySwitcher`, `DeployCLI`, and the entire
+> lock-file API are unreferenced, and both the CLI and UI hardcode `./releases` and `"php8.3"`.
+- [x] `gateway deploy create` — `DeployCLI.Deploy()` with full zero-downtime cycle `[unwired]`
+- [x] `gateway deploy activate <release>` — `Switcher.Deploy()` with pre/post hooks `[unwired]`
+- [x] `gateway deploy rollback` — `DeployCLI.Rollback()` + `CanarySwitcher.Rollback()` `[unwired]`
+- [x] `gateway deploy list` — `DeployCLI.Status()` with SwitcherStatus `[unwired]`
+- [ ] Stop hardcoding the releases directory and runtime ID (`commands.go:214`, `handlers.go:831`)
 
 ### Exit Criteria — Phase 4
 - [x] Crash recovery at every activation step — atomic symlink swap, fail-safe on each step
@@ -353,7 +389,11 @@
 > Goal: WAF, OS isolation, network policy, incident snapshots.
 
 ### WAF / Policy Engine
-- [x] Policy engine interface and phases (§26.2) — `internal/policy/engine.go` with `Phase`, `Decision`, `Engine`
+> **`Engine.Middleware` is never installed.** The request chain is a single middleware
+> (`observability.Middleware`), so no rule in this section is evaluated at runtime.
+- [ ] Wire `Engine.Middleware` and add a `security.mode` config key (off | observe | balanced | strict). §23.4: structural protections must remain even at `off`
+- [ ] Fix `CondQueryParam` — `engine.go:237` does `strings.Contains` on the raw query rather than matching a parsed param; `CondBodySize` (`:246`) ignores `Sscanf` errors; `matchesCondition` (`:203`) recompiles regexes per evaluation
+- [x] Policy engine interface and phases (§26.2) — `internal/policy/engine.go` with `Phase`, `Decision`, `Engine` `[unwired]`
 - [x] Method allow/deny rules — `CondMethod` condition type
 - [x] Path rules, header rules, query rules — `CondPath`, `CondPathPrefix`, `CondPathRegex`, `CondHeader`, `CondQueryParam`
 - [x] Body size and content-type rules — `CondBodySize` condition type
@@ -366,8 +406,12 @@
 - [x] Unit tests (15 tests): allow, deny, observe, path regex, host match, exclusion, negation, IP range, body size, priority, clear, middleware, scheme match, rules copy
 
 ### OS-Level Isolation
-- [x] Tier definitions (dev, single-user, multi-project, multi-tenant) — `IsolationConfig` with mode: none, process, namespace, cgroup
-- [x] Linux controls: cgroup v2, namespaces, seccomp, AppArmor/SELinux — `internal/supervisor/isolation.go` (ApplyIsolation, CLONE_NEWPID, CLONE_NEWNS, cgroup memory/pid limits)
+> **`ApplyIsolation` is called from nowhere.** `Supervisor.Start` builds its `exec.Cmd` at
+> `supervisor.go:110` with no `SysProcAttr` at all, so the documented isolation tiers ship as
+> unreachable code. §28.1 forbids claiming safe untrusted multi-tenancy regardless.
+- [ ] Call `Isolator.ApplyIsolation(cmd)` before starting php-fpm, driven by a `php.isolation` config block defaulting to Tier 0
+- [x] Tier definitions (dev, single-user, multi-project, multi-tenant) — `IsolationConfig` with mode: none, process, namespace, cgroup `[unwired]`
+- [x] Linux controls: cgroup v2, namespaces, seccomp, AppArmor/SELinux — `internal/supervisor/isolation.go` `[unwired]`
 - [x] Resource config: memory, CPU, PIDs, open files — MemoryLimit, CPULimit, PIDLimit in IsolationConfig
 - [x] Filesystem: release read-only, writable paths — via WritablePaths + isolation environment
 - [x] Build behind capability detection with clear diagnostics — runtime.GOOS checks, cleanup methods
@@ -400,16 +444,20 @@
 - [x] `internal/diagnostics/explain.go` — `RequestExplainer.Explain()` traces request through full pipeline
 - [x] Shows: path normalization, policy decision, route match, file resolution, script resolution
 - [x] Structured JSON output with summary and duration
-- [x] Nil-safe policy engine (auto-creates if none configured)
+- [ ] Give `explain` a real router and policy engine — `commands.go:128` passes `nil` for both, so the route and policy steps of the trace are always empty. The "nil-safe" fallback at `explain.go:34-39` builds an *empty* engine, which is why the policy step always reports `allow`. §33.1 is the flagship differentiator; it is currently half-blind
 
 ### Compatibility Doctor
 - [x] `internal/diagnostics/compat.go` — `CompatDoctor.Scan()` full project compatibility scan
 - [x] Detect: framework (Laravel, WordPress, Symfony, Composer), .htaccess directives, public dir, risky files (.git, .env, .sql, .log), deprecated PHP functions, config files
+- [ ] Fix `checkRiskyFiles` — `compat.go:262` uses `filepath.Glob("**/pattern")`, which does not recurse in Go, so the check silently never fires. Also `checkPHPFiles` reads every `.php` file into memory unbounded, and `ScannedAt` is the literal string `"now"` (`compat.go:45`)
 - [x] Score calculation (0-100)
 - [x] Suggestions for migration and fixes
 
 ### Route Contract Tests
-- [x] `internal/diagnostics/contract.go` — `ContractTestSuite` with declarative test definitions
+> No CLI command surfaces this. Same for the shadow tester and the htaccess translator below — three
+> finished, well-tested libraries with no way to run them.
+- [ ] Add `gateway test routes`, `gateway shadow`, and `gateway migrate htaccess`
+- [x] `internal/diagnostics/contract.go` — `ContractTestSuite` with declarative test definitions `[unwired]`
 - [x] Match expectations: route target, redirect URL, denied
 - [x] Host, method, and header matching
 - [x] `GenerateStandardTests()` for common patterns
@@ -433,21 +481,26 @@
 ## Cross-Cutting Concerns
 
 ### Testing Infrastructure
-- [ ] Test fixtures directory populated
-- [ ] Integration test framework with real PHP-FPM
-- [ ] Security test suite
-- [ ] Load/benchmark test suite
-- [ ] Chaos test framework
-- [ ] Cross-platform CI (Linux, macOS, Windows)
+- [ ] Test fixtures directory populated — `test/compatibility/`, `test/fixtures/frameworks/`, `test/fixtures/security/` are empty dirs
+- [x] Integration test framework with real PHP-FPM — `test/integration/` and `test/e2e/` (1473 lines, 24 tests), both build-tag gated
+- [x] Security test suite — `test/security/`, but see below: three of its tests assert nothing
+- [x] Load/benchmark test suite — `test/load/`, 6 benchmarks
+- [x] Chaos test framework — `test/chaos/`, 9 tests
+- [ ] Cross-platform CI (Linux, macOS, Windows) — every workflow is `ubuntu-latest`; the darwin cross-compile targets are never verified
 - [ ] Soak test setup (24-72h)
-- [ ] Fuzz regression corpus persisted
+- [ ] Fuzz regression corpus persisted — `testdata/fuzz` absent
+- [ ] Fix `make test-fuzz` — it invokes `FuzzHtaccessTranslator`, which does not exist, so the target always fails
+- [ ] Replace the three no-op tests in `test/security/security_test.go` (`:172` re-implements auth inline instead of calling `admin.Server`; `:215` is a `t.Log`; `:223` asserts `"POST" != "GET"`)
+- [ ] Tests for `cmd/gateway` — 677 lines holding the entire request path, script resolution, MIME/ETag, and CLI dispatch, with 0% coverage
+- [ ] Delete or use `test/wordpress/` — 94 MB of a WordPress checkout that no Go test references
+- [ ] Remove committed `coverage.out` (129 KB) from the repo
 
 ### Documentation
-- [ ] README and quick start
+- [x] README and quick start — `README.md`, `docs/QUICK_START.md`
 - [ ] Installation guide
 - [ ] Local development guide
-- [ ] Production deployment guide
-- [ ] Configuration reference
+- [x] Production deployment guide — `docs/DEPLOYMENT.md`, but it documents `X-Forwarded-For` handling that does not exist (§10.3 untracked)
+- [x] Configuration reference — annotated `gateway.yaml`; note `examples/gateway.yaml` diverges from the loader and would fail to parse
 - [ ] CLI reference
 - [ ] Admin API reference
 - [ ] PHP runtime and extension guide
@@ -461,11 +514,20 @@
 - [ ] Operations runbook
 - [ ] Plugin SDK
 - [ ] Contributing guide
-- [ ] Architecture decision records (docs/adr/)
+- [ ] Architecture decision records (docs/adr/) — directory exists and is empty; §58 pre-names ADR-0001…0012, and `AGENTS.md` mandates an ADR per new package
 - [ ] Vulnerability reporting policy
+- [ ] ADR for the dashboard (in neither spec nor this file; adds a Node toolchain against a single-binary packaging goal — §36.4 permits it but requires the core server not depend on it)
+- [ ] ADR for `internal/runtime/provision.go` (auto-runs `sudo apt-get install` at startup; in tension with §5.3 immutable runtimes and §18.4 signed artifacts)
+- [ ] §52.3 license and notice inventory for redistributed runtimes, libraries, extensions, CA assets, dashboard assets, and Go modules
 
 ### Packaging
+> `packaging/` and `scripts/` exist and are empty. There is no Dockerfile anywhere in the repo, no
+> release workflow, and no tag trigger. `build-all` covers linux/amd64 and darwin/amd64+arm64 — no
+> linux/arm64, no Windows — and CI is `ubuntu-latest` only, so the darwin targets are never verified.
 - [ ] Standalone Go binary
+- [ ] Fix `Makefile:12` ldflags — they set `-X main.version=…` but the variables live in `internal/buildinfo`, so the linker silently drops them and `gateway version` always prints `dev`
+- [ ] Add `govulncheck`, `gosec`/CodeQL, dependabot, a dashboard lint/build job, and a multi-PHP-version e2e matrix (currently pinned to 8.3)
+- [ ] Clean stale bundles on `dashboard-embed` — `cp -r` never removes, so ~690 KB of orphaned JS/CSS is compiled into the binary
 - [ ] Debian/RPM packages
 - [ ] Homebrew formula
 - [ ] Windows installer
@@ -477,6 +539,17 @@
 - [ ] PR pipeline: format → lint → vet → static analysis → unit tests → race tests → fuzz smoke → integration → build → config validation → docs check
 - [ ] Scheduled pipeline: long fuzzing, security regression, framework compat, load tests, dependency scan
 - [ ] Release pipeline: reproducible build, SBOM, checksums, signed artifacts, upgrade tests, rollback tests
+
+### Housekeeping
+- [ ] Adopt or delete `internal/php/fpm` — 203 lines at 85.3% coverage, zero importers, and `supervisor.generateConfig` (`supervisor.go:255-350`) re-implements a worse version inline. Adopting is the recommendation
+- [ ] `go mod tidy` — `gorilla/websocket` is marked `// indirect` but is a direct import at `internal/ui/handlers.go:19`
+- [ ] Change `.gitignore` line 3 from a bare `gateway` to `/gateway` — as written it ignores the `cmd/gateway/` **source directory** for every ignore-aware tool, so ripgrep silently skips the entire request path and `git add .` misses new files there
+- [ ] Use `internal/errors` in the request path — 13 stable codes at 100% coverage, referenced exactly once as linter appeasement (`var _ = errors.IsCode`, `main.go:677`). All error handling is `fmt.Errorf`; §37 treats the codes as a compatibility contract
+- [ ] Fix httpoxy — `cgi/params.go:71-74` copies all client headers to `HTTP_*` including `Proxy`; `SERVER_SOFTWARE` is hardcoded `"go-php-gateway/1.0"`
+- [ ] Compile route regexes once — `router/match.go:32-36` compiles at load and discards the result; `:85` and `:112` recompile per request, discarding errors
+- [ ] Make the dashboard honest — `/api/metrics/history` (`handlers.go:884`) generates data arithmetically, `/api/config` (`:415`) returns hardcoded literals and never reads `gateway.yaml`, `/api/config/save` (`:476`) persists nothing, `StatusProvider` counters are never incremented, and `LogBuffer` is fed only by UI handlers so the Logs page never shows a request
+- [ ] Reconcile `examples/gateway.yaml` with the loader — it uses `schema: "1.0"` and an integer `max_body_size` against a string field, so it would fail to parse
+- [ ] Resolve the §15.4 vs §44 fuzzer naming inconsistency in the spec, and pick one canonical set
 
 ---
 
@@ -505,42 +578,28 @@ Before marking any feature complete, verify:
 
 ## Progress Summary
 
-| Phase | Status | Notes |
-|-------|--------|-------|
-| Phase 0: Architecture Prototypes | Complete | All core packages built & tested |
-| Phase 1: Local Dev Server | Complete | Cache-control, PATH_INFO, config CLI, secret redaction added |
-| Phase 2: Runtime Manager | Complete | Signed index fetching, artifact verification added |
-| Phase 3: Production Server | Complete | ACME, CSRF, OpenTelemetry, doctor added |
-| Phase 4: Deployment Manager | Complete | Shared writable paths, deploy CLI, canary switching added |
-| Phase 5: Advanced Security | Complete | OS-level isolation (cgroups, namespaces) added |
-| Phase 6: Differentiators | Complete | Shadow testing, Apache .htaccess translator added |
+Phase status reflects **exit criteria met**, not code written. A phase whose code exists but is not
+reachable from `main` is not complete — see the `[unwired]` annotations and [ROADMAP.md](ROADMAP.md).
 
-### Phase 0 Summary (2026-07-26)
+| Phase | Status | Blocking |
+|-------|--------|----------|
+| Phase 0: Architecture Prototypes | Code complete, criteria unmet | Script resolution chain (§14.5) still partly hardcoded; technical risks never documented |
+| Phase 1: Local Dev Server | Code complete, criteria unmet | Smoke tests for plain PHP / WordPress / Laravel not run; concurrency stability unverified |
+| Phase 2: Runtime Manager | Partial | `gateway php install` is a stub; `runtime/signed.go` unwired, so nothing is ever downloaded or verified; archive-extraction safety tests missing |
+| Phase 3: Production Server | Partial | **No TLS listener exists.** Metrics, tracing, redaction, config reload, admin API all unwired. Resource limits (§24) unimplemented. Load and security suites not passing as exit gates |
+| Phase 4: Deployment Manager | Partial | `Switcher`/`CanarySwitcher` unwired; `Prober.Probe` is a no-op, so the health gate cannot fail |
+| Phase 5: Advanced Security | Partial | Policy engine and rate limiter unwired; isolation code unreachable; external security audit not done |
+| Phase 6: Differentiators | Partial | `explain` passes a nil router and nil policy engine; htaccess translator, contract tests, and shadow tester have no CLI surface; per-route runtime (§33.9) and deployment replay (§33.8) not started |
 
-**Built & passing tests:**
-- `internal/errors/` — 5 tests (error codes, wrapping, IsCode)
-- `internal/filesystem/` — 30 tests + 1 fuzz (path parser + resolver)
-- `internal/php/fastcgi/` — 8 tests + 3 fuzz (protocol encode/decode)
-- `internal/php/cgi/` — 18 tests + 1 fuzz (response parser + params)
-- `internal/supervisor/` — FPM lifecycle management (no tests yet)
-- `internal/buildinfo/` — build metadata
-- `cmd/gateway/` — serve command with static + PHP routing
+### Stranded deferrals
 
-**What works:**
-- Path parsing with all security checks (NUL, control chars, backslash, encoded slash, double-encoding, dot collapse)
-- Filesystem resolution with traversal protection, symlink policies, protected file patterns
-- FastCGI record encode/decode with full round-trip verification
-- CGI response parsing with header injection prevention
-- CGI variable mapping for all standard environment variables
-- HTTP server with timeouts, graceful shutdown, request ID logging
-- FPM supervisor with config generation and socket wait
+Four items were deferred to Phase 1, Phase 1 was marked complete, and none were done. Re-listed here
+so they stop being invisible:
 
-**Still needed for Phase 0 completion:**
-- Wire FastCGI `Execute()` to real FPM socket (currently a stub)
-- Verify plain PHP request end-to-end with real php-fpm
-- Verify cancellation with real FPM
-- `.golangci.yml` setup
-- CI pipeline
+- [ ] Fuzz test: `FuzzPathResolverInputs`
+- [ ] Connection-level deadlines via `ConnContext`
+- [ ] Unit tests for FPM config generation
+- [ ] Technical risks documented (§59 names seven)
 
 ---
 
