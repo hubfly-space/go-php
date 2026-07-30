@@ -16,6 +16,7 @@ import {
   Sun,
   Moon,
   Search,
+  Puzzle,
 } from 'lucide-react'
 import CommandPalette from './CommandPalette'
 import { useApi, useInterval } from '../hooks/useApi'
@@ -27,6 +28,7 @@ const navItems = [
   { to: '/deployments', icon: Rocket, label: 'Deployments' },
   { to: '/routes', icon: GitFork, label: 'Routes' },
   { to: '/runtimes', icon: Cpu, label: 'Runtimes' },
+  { to: '/extensions', icon: Puzzle, label: 'Extensions' },
   { to: '/config', icon: Settings, label: 'Configuration' },
   { to: '/logs', icon: ScrollText, label: 'Logs' },
   { to: '/doctor', icon: Activity, label: 'Diagnostics' },

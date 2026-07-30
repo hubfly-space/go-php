@@ -14,6 +14,7 @@ import {
   Moon,
   Sun,
   X,
+  Puzzle,
 } from 'lucide-react'
 
 interface CommandPaletteProps {
@@ -34,7 +35,6 @@ export default function CommandPalette({ open, onClose, darkMode, onToggleTheme 
         if (open) onClose()
         else {
           setQuery('')
-          // trigger open from parent
         }
       }
       if (e.key === 'Escape' && open) {
@@ -53,6 +53,7 @@ export default function CommandPalette({ open, onClose, darkMode, onToggleTheme 
     { label: 'Deployments & Releases', icon: Rocket, action: () => navigate('/deployments') },
     { label: 'Route Inspector', icon: GitFork, action: () => navigate('/routes') },
     { label: 'PHP Runtimes', icon: Cpu, action: () => navigate('/runtimes') },
+    { label: 'PHP Extensions', icon: Puzzle, action: () => navigate('/extensions') },
     { label: 'Configuration', icon: Settings, action: () => navigate('/config') },
     { label: 'System Logs', icon: ScrollText, action: () => navigate('/logs') },
     { label: 'System Doctor & Health', icon: Activity, action: () => navigate('/doctor') },

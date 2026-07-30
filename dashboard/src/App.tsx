@@ -5,6 +5,7 @@ import SitesPage from './pages/Sites'
 import DeploymentsPage from './pages/Deployments'
 import RoutesPage from './pages/Routes'
 import RuntimesPage from './pages/Runtimes'
+import ExtensionsPage from './pages/Extensions'
 import ConfigPage from './pages/Config'
 import LogsPage from './pages/Logs'
 import DoctorPage from './pages/Doctor'
@@ -20,6 +21,7 @@ export default function App() {
           <Route path="/deployments" element={<DeploymentsPage />} />
           <Route path="/routes" element={<RoutesPage />} />
           <Route path="/runtimes" element={<RuntimesPage />} />
+          <Route path="/extensions" element={<ExtensionsPage />} />
           <Route path="/config" element={<ConfigPage />} />
           <Route path="/logs" element={<LogsPage />} />
           <Route path="/doctor" element={<DoctorPage />} />

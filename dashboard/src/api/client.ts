@@ -36,4 +36,10 @@ export const api = {
   getDoctorCompat: (path?: string) => request<import('../types').CompatReport>(`/doctor/compat${path ? `?path=${encodeURIComponent(path)}` : ''}`),
   explainRequest: (url: string) => request<import('../types').Explanation>(`/explain?url=${encodeURIComponent(url)}`),
   getMetricsHistory: () => request<{ history: import('../types').MetricPoint[] }>('/metrics/history'),
+
+  // Extensions
+  getExtensions: () => request<{ extensions: import('../types').ExtensionInfo[]; enabled: string[] }>('/extensions'),
+  getProfiles: () => request<{ profiles: import('../types').ExtensionProfile[] }>('/profiles'),
+  getSiteExtensions: (id: string) => request<import('../types').SiteExtensions>(`/sites/${id}/extensions`),
+  updateSiteExtensions: (id: string, data: { extensions: string[]; profile: string }) => request<{ status: string }>(`/sites/${id}/extensions`, { method: 'PUT', body: JSON.stringify(data) }),
 }
