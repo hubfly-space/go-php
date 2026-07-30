@@ -56,6 +56,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/status", s.handleStatus)
 	s.mux.HandleFunc("/api/sites", s.handleSites)
 	s.mux.HandleFunc("/api/sites/", s.handleSiteByID)
+	s.mux.HandleFunc("/api/extensions", s.handleExtensions)
+	s.mux.HandleFunc("/api/profiles", s.handleProfiles)
 	s.mux.HandleFunc("/api/config", s.handleConfig)
 	s.mux.HandleFunc("/api/config/validate", s.handleConfigValidate)
 	s.mux.HandleFunc("/api/config/save", s.handleConfigSave)
