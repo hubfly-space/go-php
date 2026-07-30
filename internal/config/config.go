@@ -30,26 +30,49 @@ type ServerConfig struct {
 
 // PHPConfig defines PHP-FPM backend settings.
 type PHPConfig struct {
-	Binary         string        `yaml:"binary"`
-	SocketPath     string        `yaml:"socket_path"`
-	MaxChildren    int           `yaml:"max_children"`
-	StartServers   int           `yaml:"start_servers"`
-	MinSpare       int           `yaml:"min_spare"`
-	MaxSpare       int           `yaml:"max_spare"`
-	MaxRequests    int           `yaml:"max_requests"`
-	RequestTimeout time.Duration `yaml:"request_timeout"`
+	Binary           string            `yaml:"binary"`
+	SocketPath       string            `yaml:"socket_path"`
+	MaxChildren      int               `yaml:"max_children"`
+	StartServers     int               `yaml:"start_servers"`
+	MinSpare         int               `yaml:"min_spare"`
+	MaxSpare         int               `yaml:"max_spare"`
+	MaxRequests      int               `yaml:"max_requests"`
+	RequestTimeout   time.Duration     `yaml:"request_timeout"`
+	ExtensionProfile string            `yaml:"extension_profile"`
+	Extensions       []ExtensionConfig `yaml:"extensions"`
+	PhpIni           []IniSetting      `yaml:"php_ini"`
+}
+
+// ExtensionConfig defines a single PHP extension configuration.
+type ExtensionConfig struct {
+	Name    string `yaml:"name"`
+	Type    string `yaml:"type"`    // "extension" or "zend_extension"
+	Enabled bool   `yaml:"enabled"` // default true
+}
+
+// IniSetting defines a php.ini directive.
+type IniSetting struct {
+	Name  string `yaml:"name"`
+	Value string `yaml:"value"`
+}
+
+// ExtensionOverride defines per-route extension overrides.
+type ExtensionOverride struct {
+	Enable  []string `yaml:"enable"`
+	Disable []string `yaml:"disable"`
 }
 
 // RouteConfig defines a single route.
 type RouteConfig struct {
-	Host       string            `yaml:"host"`
-	Path       string            `yaml:"path"`
-	PathPrefix string            `yaml:"path_prefix"`
-	Regex      string            `yaml:"regex"`
-	Target     string            `yaml:"target"`
-	Status     int               `yaml:"status"`
-	Methods    []string          `yaml:"methods"`
-	Headers    map[string]string `yaml:"headers"`
+	Host              string            `yaml:"host"`
+	Path              string            `yaml:"path"`
+	PathPrefix        string            `yaml:"path_prefix"`
+	Regex             string            `yaml:"regex"`
+	Target            string            `yaml:"target"`
+	Status            int               `yaml:"status"`
+	Methods           []string          `yaml:"methods"`
+	Headers           map[string]string `yaml:"headers"`
+	ExtensionOverride *ExtensionOverride `yaml:"extensions,omitempty"`
 }
 
 // LoggingConfig defines access log settings.
@@ -78,12 +101,15 @@ func DefaultConfig() *Config {
 			MaxHeaderBytes:    1 << 20,
 		},
 		PHP: PHPConfig{
-			MaxChildren:    20,
-			StartServers:   2,
-			MinSpare:       2,
-			MaxSpare:       6,
-			MaxRequests:    500,
-			RequestTimeout: 60 * time.Second,
+			MaxChildren:       20,
+			StartServers:      2,
+			MinSpare:          2,
+			MaxSpare:          6,
+			MaxRequests:       500,
+			RequestTimeout:    60 * time.Second,
+			ExtensionProfile:  "",
+			Extensions:        nil,
+			PhpIni:            nil,
 		},
 		Logging: LoggingConfig{
 			Format: "json",

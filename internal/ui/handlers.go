@@ -71,6 +71,8 @@ type SiteConfig struct {
 	Routes     int               `json:"routes"`
 	SSL        bool              `json:"ssl"`
 	Headers    map[string]string `json:"headers,omitempty"`
+	Extensions []string          `json:"extensions,omitempty"`
+	Profile    string            `json:"profile,omitempty"`
 	CreatedAt  time.Time         `json:"created_at"`
 	UpdatedAt  time.Time         `json:"updated_at"`
 }
@@ -95,20 +97,29 @@ type ServerCfg struct {
 
 // PHPCfg for JSON response.
 type PHPCfg struct {
-	Binary         string `json:"binary"`
-	SocketPath     string `json:"socket_path"`
-	MaxChildren    int    `json:"max_children"`
-	RequestTimeout string `json:"request_timeout"`
+	Binary           string   `json:"binary"`
+	SocketPath       string   `json:"socket_path"`
+	MaxChildren      int      `json:"max_children"`
+	RequestTimeout   string   `json:"request_timeout"`
+	ExtensionProfile string   `json:"extension_profile"`
+	Extensions       []string `json:"extensions"`
 }
 
 // RouteCfg for JSON response.
 type RouteCfg struct {
-	Host    string            `json:"host"`
-	Path    string            `json:"path"`
-	Target  string            `json:"target"`
-	Status  int               `json:"status"`
-	Methods []string          `json:"methods,omitempty"`
-	Headers map[string]string `json:"headers,omitempty"`
+	Host              string            `json:"host"`
+	Path              string            `json:"path"`
+	Target            string            `json:"target"`
+	Status            int               `json:"status"`
+	Methods           []string          `json:"methods,omitempty"`
+	Headers           map[string]string `json:"headers,omitempty"`
+	ExtensionOverride *ExtensionOverride `json:"extensions,omitempty"`
+}
+
+// ExtensionOverride for JSON response.
+type ExtensionOverride struct {
+	Enable  []string `json:"enable,omitempty"`
+	Disable []string `json:"disable,omitempty"`
 }
 
 // LoggingCfg for JSON response.
@@ -412,6 +423,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			Binary:         s.status.DocRoot,
 			MaxChildren:    20,
 			RequestTimeout: "60s",
+			Extensions:     []string{},
 		},
 		Logging: LoggingCfg{
 			Format: "json",

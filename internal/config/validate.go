@@ -6,6 +6,15 @@ import (
 	"time"
 )
 
+// knownExtensionProfiles are the valid extension profile names.
+var knownExtensionProfiles = map[string]bool{
+	"minimal":       true,
+	"web-standard":  true,
+	"wordpress":     true,
+	"laravel":       true,
+	"development":   true,
+}
+
 // Validate checks a config for semantic errors.
 func Validate(cfg *Config) error {
 	if cfg.Schema == "" {
@@ -38,6 +47,55 @@ func Validate(cfg *Config) error {
 	}
 	if cfg.PHP.RequestTimeout <= 0 {
 		cfg.PHP.RequestTimeout = 60 * time.Second
+	}
+
+	// Validate extension config.
+	if cfg.PHP.ExtensionProfile != "" && len(cfg.PHP.Extensions) > 0 {
+		return fmt.Errorf("php: cannot specify both extension_profile and individual extensions; choose one")
+	}
+	if cfg.PHP.ExtensionProfile != "" && !knownExtensionProfiles[cfg.PHP.ExtensionProfile] {
+		return fmt.Errorf("php: unknown extension_profile %q; valid: minimal, web-standard, wordpress, laravel, development", cfg.PHP.ExtensionProfile)
+	}
+	for _, ext := range cfg.PHP.Extensions {
+		if ext.Name == "" {
+			return fmt.Errorf("php: extension name is required")
+		}
+		if ext.Type != "" && ext.Type != "extension" && ext.Type != "zend_extension" {
+			return fmt.Errorf("php: extension %q: type must be 'extension' or 'zend_extension'", ext.Name)
+		}
+	}
+	seenExt := make(map[string]bool)
+	for _, ext := range cfg.PHP.Extensions {
+		if seenExt[ext.Name] {
+			return fmt.Errorf("php: duplicate extension %q", ext.Name)
+		}
+		seenExt[ext.Name] = true
+	}
+
+	// Validate per-route extension overrides.
+	for i, route := range cfg.Routes {
+		if route.ExtensionOverride != nil {
+			for _, name := range route.ExtensionOverride.Enable {
+				if name == "" {
+					return fmt.Errorf("routes[%d]: extension enable list contains empty name", i)
+				}
+			}
+			for _, name := range route.ExtensionOverride.Disable {
+				if name == "" {
+					return fmt.Errorf("routes[%d]: extension disable list contains empty name", i)
+				}
+			}
+			// Check no overlap between enable/disable.
+			enableSet := make(map[string]bool, len(route.ExtensionOverride.Enable))
+			for _, name := range route.ExtensionOverride.Enable {
+				enableSet[name] = true
+			}
+			for _, name := range route.ExtensionOverride.Disable {
+				if enableSet[name] {
+					return fmt.Errorf("routes[%d]: extension %q is in both enable and disable lists", i, name)
+				}
+			}
+		}
 	}
 
 	// Validate logging.

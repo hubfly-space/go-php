@@ -19,6 +19,20 @@ php:
   max_requests: 500
   request_timeout: 60s
 
+  # Extension configuration — pick a profile OR list individual extensions:
+  # extension_profile: web-standard
+  # extensions:
+  #   - name: xdebug
+  #     type: zend_extension
+  #     enabled: true
+  #   - name: opcache
+  #     enabled: true
+  # php_ini:
+  #   - name: memory_limit
+  #     value: 256M
+  #   - name: upload_max_filesize
+  #     value: 100M
+
 routes:
   - path_prefix: /api/
     target: /index.php
