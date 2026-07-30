@@ -722,11 +722,12 @@ func generateID(name string) string {
 	return id
 }
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
-
 func (s *Server) handleWSLogs(w http.ResponseWriter, r *http.Request) {
+	// The upgrader is built per server so it can consult that server's guard.
+	// A package-level upgrader with `CheckOrigin: return true` let any page in
+	// the operator's browser attach to the management log stream.
+	upgrader := websocket.Upgrader{CheckOrigin: s.guard.CheckOrigin}
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		s.logger.Error("websocket upgrade failed", "error", err)

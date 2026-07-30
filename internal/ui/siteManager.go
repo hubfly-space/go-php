@@ -13,15 +13,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-php/gateway/internal/filesystem"
 	"github.com/go-php/gateway/internal/php/cgi"
 	"github.com/go-php/gateway/internal/php/fastcgi"
 )
 
 // SiteManager manages per-site HTTP servers.
 type SiteManager struct {
-	servers map[string]*runningSite
-	mu      sync.RWMutex
-	logger  *slog.Logger
+	servers  map[string]*runningSite
+	mu       sync.RWMutex
+	logger   *slog.Logger
 	sockPath string
 }
 
@@ -91,12 +92,7 @@ func (sm *SiteManager) StartSite(cfg SiteConfig) error {
 	}
 
 	addr := fmt.Sprintf("127.0.0.1:%d", cfg.Port)
-	handler := &siteHandler{
-		docRoot:  cfg.Webroot,
-		siteID:   cfg.ID,
-		sockPath: sm.sockPath,
-		logger:   sm.logger,
-	}
+	handler := newSiteHandler(cfg.Webroot, cfg.ID, sm.sockPath, sm.logger)
 
 	srv := &http.Server{
 		Addr:              addr,
@@ -179,74 +175,96 @@ type siteHandler struct {
 	siteID   string
 	sockPath string
 	logger   *slog.Logger
+
+	// resolver enforces the same filesystem boundary as the main gateway.
+	// This handler used to do its own filepath.Clean plus a prefix check, with
+	// no protected-pattern list at all — so `.env` under a site webroot was
+	// served, and a prefix check without a separator boundary let /var/wwwroot
+	// pass for a docRoot of /var/www. Two request pipelines with two security
+	// postures means every fix to one silently misses the other.
+	resolver *filesystem.Resolver
+}
+
+// newSiteHandler builds a handler with the hardened resolver.
+func newSiteHandler(docRoot, siteID, sockPath string, logger *slog.Logger) *siteHandler {
+	return &siteHandler{
+		docRoot:  docRoot,
+		siteID:   siteID,
+		sockPath: sockPath,
+		logger:   logger,
+		resolver: filesystem.NewResolver(docRoot,
+			filesystem.SymlinkWithinRoot, filesystem.DefaultProtectedPatterns()),
+	}
 }
 
 func (h *siteHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	path := r.URL.Path
 
-	// Prevent path traversal.
-	cleaned := filepath.Clean(path)
-	if strings.Contains(cleaned, "..") {
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
-
-	// Resolve under webroot.
-	absPath := filepath.Join(h.docRoot, strings.TrimPrefix(cleaned, "/"))
-
-	// Confirm it stays under docRoot.
-	if !strings.HasPrefix(absPath, h.docRoot) {
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
-
-	// Check what we landed on.
-	info, err := os.Stat(absPath)
-
-	// If it does not exist or is a directory, try index files.
-	if err != nil || info.IsDir() {
-		dir := absPath
-		if err == nil && info.IsDir() {
-			dir = absPath
-		}
-		for _, idx := range []string{"index.php", "index.html"} {
-			p := filepath.Join(dir, idx)
-			if stat, statErr := os.Stat(p); statErr == nil && !stat.IsDir() {
-				absPath = p
-				info = stat
-				break
-			}
-		}
-	}
-
-	// Serve the file.
-	if strings.HasSuffix(absPath, ".php") && h.sockPath != "" {
-		h.servePHP(w, r, absPath, start)
-		return
-	}
-
-	f, err := os.Open(absPath)
+	// Parse the path with the same rules the main gateway uses: single-pass
+	// decoding, NUL and control rejection, encoded-slash rejection, dot-segment
+	// collapsing.
+	pp, err := filesystem.ParsePath(r.URL.Path)
 	if err != nil {
-		http.NotFound(w, r)
-		h.logger.Info("site 404", "site", h.siteID, "path", r.URL.Path, "resolved", absPath, "duration_ms", time.Since(start).Milliseconds())
+		h.logger.Warn("site path rejected", "site", h.siteID, "path", r.URL.Path, "error", err)
+		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
-	defer f.Close()
+	normalized := pp.NormalizedPath
 
-	info, err = f.Stat()
-	if err != nil || info.IsDir() {
-		http.NotFound(w, r)
+	if h.resolver.IsProtected(normalized) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 
-	ct := detectSiteMIME(absPath)
-	w.Header().Set("Content-Type", ct)
-	w.Header().Set("X-Request-ID", fmt.Sprintf("site_%d", time.Now().UnixNano()))
-	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
+	// Resolve the request path, falling back to index files.
+	candidates := []string{normalized}
+	if strings.HasSuffix(normalized, "/") {
+		candidates = []string{normalized + "index.php", normalized + "index.html"}
+	} else {
+		candidates = append(candidates,
+			normalized+"/index.php", normalized+"/index.html")
+	}
 
-	h.logger.Info("site request", "site", h.siteID, "path", r.URL.Path,
-		"file", absPath, "duration_ms", time.Since(start).Milliseconds())
+	for _, candidate := range candidates {
+		resolved, resErr := h.resolver.ResolveInfo(candidate)
+		if resErr != nil || resolved == nil || !resolved.Mode().IsRegular() {
+			continue
+		}
+		if h.resolver.IsProtected(candidate) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		absPath := filepath.Join(h.docRoot, strings.TrimPrefix(candidate, "/"))
+
+		if strings.HasSuffix(candidate, ".php") && h.sockPath != "" {
+			h.servePHP(w, r, absPath, start)
+			return
+		}
+
+		f, openErr := os.Open(absPath)
+		if openErr != nil {
+			continue
+		}
+		defer f.Close()
+
+		info, statErr := f.Stat()
+		if statErr != nil || info.IsDir() {
+			continue
+		}
+
+		w.Header().Set("Content-Type", detectSiteMIME(absPath))
+		w.Header().Set("X-Request-ID", fmt.Sprintf("site_%d", time.Now().UnixNano()))
+		http.ServeContent(w, r, info.Name(), info.ModTime(), f)
+
+		h.logger.Info("site request", "site", h.siteID, "path", r.URL.Path,
+			"file", absPath, "duration_ms", time.Since(start).Milliseconds())
+		return
+	}
+
+	http.NotFound(w, r)
+	h.logger.Info("site 404", "site", h.siteID, "path", r.URL.Path,
+		"duration_ms", time.Since(start).Milliseconds())
 }
 
 func (h *siteHandler) servePHP(w http.ResponseWriter, r *http.Request, absPath string, start time.Time) {

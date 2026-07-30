@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/go-php/gateway/internal/admin"
 )
 
 //go:embed static/*
@@ -27,6 +29,17 @@ type ServerConfig struct {
 	// MetricsHandler serves the Prometheus exposition. Nil disables the
 	// endpoint.
 	MetricsHandler http.Handler
+
+	// Token is the bearer token required by every management request. It is
+	// mandatory: this listener can create directories, start listeners on
+	// arbitrary ports, and activate releases, so an unauthenticated one is a
+	// remote-code-execution surface. NewServer generates a token when this is
+	// empty rather than serving without auth.
+	Token string
+
+	// AllowedOrigins are additional browser origins permitted to call the API.
+	// Same-origin requests are always allowed.
+	AllowedOrigins []string
 }
 
 // DefaultConfig returns sensible defaults.
@@ -45,10 +58,22 @@ type Server struct {
 	server    *http.Server
 	logBuffer *LogBuffer
 	siteMgr   *SiteManager
+	guard     *admin.Guard
 }
 
 // NewServer creates a new UI server.
+//
+// If cfg.Token is empty a token is generated; the server never runs without
+// authentication.
 func NewServer(cfg ServerConfig, logger *slog.Logger, status *StatusProvider) *Server {
+	if cfg.Token == "" {
+		cfg.Token = admin.GenerateToken()
+	}
+
+	guardCfg := admin.DefaultGuardConfig()
+	guardCfg.Token = cfg.Token
+	guardCfg.AllowedOrigins = cfg.AllowedOrigins
+
 	s := &Server{
 		cfg:       cfg,
 		logger:    logger,
@@ -56,10 +81,14 @@ func NewServer(cfg ServerConfig, logger *slog.Logger, status *StatusProvider) *S
 		mux:       http.NewServeMux(),
 		logBuffer: NewLogBuffer(500),
 		siteMgr:   NewSiteManager(logger, cfg.SockPath),
+		guard:     admin.NewGuard(guardCfg, logger),
 	}
 	s.routes()
 	return s
 }
+
+// Token returns the bearer token required by the management API.
+func (s *Server) Token() string { return s.cfg.Token }
 
 func (s *Server) routes() {
 	// API routes
@@ -124,7 +153,7 @@ func (s *Server) routes() {
 func (s *Server) Start() error {
 	s.server = &http.Server{
 		Addr:              s.cfg.Addr,
-		Handler:           s.mux,
+		Handler:           s.guard.Wrap(s.mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
