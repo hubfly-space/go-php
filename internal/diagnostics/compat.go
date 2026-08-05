@@ -259,8 +259,18 @@ func (d *CompatDoctor) checkRiskyFiles(r *CompatibilityReport) {
 	}
 
 	for _, rk := range risky {
-		matches, _ := filepath.Glob(filepath.Join(d.root, "**", rk.pattern))
-		if len(matches) > 0 {
+		found := false
+		_ = filepath.WalkDir(d.root, func(path string, entry os.DirEntry, err error) error {
+			if err != nil || found {
+				return nil
+			}
+			matched, _ := filepath.Match(rk.pattern, entry.Name())
+			if matched {
+				found = true
+			}
+			return nil
+		})
+		if found {
 			r.Warnings = append(r.Warnings, CompatIssue{
 				Category:   "security",
 				Severity:   "warning",

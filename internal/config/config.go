@@ -262,14 +262,9 @@ func DefaultConfig() *Config {
 	}
 }
 
-// Load reads a YAML config file and applies defaults.
-func Load(path string) (*Config, error) {
+// Parse decodes YAML bytes into a Config struct and validates it.
+func Parse(data []byte) (*Config, error) {
 	cfg := DefaultConfig()
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read config: %w", err)
-	}
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
@@ -280,4 +275,13 @@ func Load(path string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// Load reads a YAML config file and applies defaults.
+func Load(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read config: %w", err)
+	}
+	return Parse(data)
 }
