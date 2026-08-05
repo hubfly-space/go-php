@@ -190,11 +190,18 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	// One reaper per process. Wait must be called exactly once, so Stop and
 	// HealthCheck both consult this instead of calling Wait themselves.
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s.mu.Lock()
+				s.exitErr = fmt.Errorf("supervisor: reaper panic: %v", r)
+				s.mu.Unlock()
+			}
+			close(exited)
+		}()
 		err := cmd.Wait()
 		s.mu.Lock()
 		s.exitErr = err
 		s.mu.Unlock()
-		close(exited)
 	}()
 
 	// Wait for socket to appear.

@@ -163,6 +163,11 @@ func (s *Server) Start() error {
 	s.logger.Info("management UI starting", "addr", s.cfg.Addr)
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil && s.logger != nil {
+				s.logger.Error("UI server goroutine panic recovered", "panic", r)
+			}
+		}()
 		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			s.logger.Error("UI server error", "error", err)
 		}

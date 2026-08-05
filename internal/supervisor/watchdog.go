@@ -86,6 +86,11 @@ func (w *Watchdog) Run(ctx context.Context) <-chan struct{} {
 
 	go func() {
 		defer close(done)
+		defer func() {
+			if r := recover(); r != nil && w.logger != nil {
+				w.logger.Error("watchdog goroutine panic recovered", "panic", r)
+			}
+		}()
 
 		ticker := time.NewTicker(w.cfg.Interval)
 		defer ticker.Stop()

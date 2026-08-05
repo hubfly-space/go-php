@@ -36,6 +36,8 @@ func NewIndexFetcher(pubKey ed25519.PublicKey, cacheDir string) *IndexFetcher {
 	}
 }
 
+const maxSignedIndexSize = 10 * 1024 * 1024 // 10MB limit for signed index payload
+
 // FetchAndVerify downloads a signed index, verifies the signature, and returns it.
 func (f *IndexFetcher) FetchAndVerify(url string) (*Index, error) {
 	resp, err := f.Client.Get(url)
@@ -48,7 +50,7 @@ func (f *IndexFetcher) FetchAndVerify(url string) (*Index, error) {
 		return nil, fmt.Errorf("fetch index: HTTP %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxSignedIndexSize))
 	if err != nil {
 		return nil, fmt.Errorf("read index body: %w", err)
 	}
