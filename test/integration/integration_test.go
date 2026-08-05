@@ -173,7 +173,7 @@ func TestPathTraversalBlocks(t *testing.T) {
 				"SERVER_PROTOCOL":   "HTTP/1.1",
 			}
 
-			stdout, _, _, err := ts.FPMClient.Execute(params, nil)
+			stdout, _, _, err := ts.FPMClient.Execute(context.Background(), params, nil)
 			if err != nil {
 				// Connection error — expected for blocked paths.
 				return
@@ -273,7 +273,7 @@ func TestCGIVariables(t *testing.T) {
 	}
 
 	body := strings.NewReader(`{"name":"test","email":"test@example.com"}`)
-	stdout, _, _, err := ts.FPMClient.Execute(params, body)
+	stdout, _, _, err := ts.FPMClient.Execute(context.Background(), params, body)
 	if err != nil {
 		t.Fatalf("FPM request failed: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestRequestCancellation(t *testing.T) {
 		"SERVER_PROTOCOL":   "HTTP/1.1",
 	}
 
-	_, _, _, err := ts.FPMClient.Execute(params, nil)
+	_, _, _, err := ts.FPMClient.Execute(context.Background(), params, nil)
 	if err == nil {
 		// Might succeed if FPM is very fast.
 		return
@@ -331,7 +331,7 @@ func TestResponseHeaders(t *testing.T) {
 		"SERVER_PROTOCOL":   "HTTP/1.1",
 	}
 
-	stdout, _, _, err := ts.FPMClient.Execute(params, nil)
+	stdout, _, _, err := ts.FPMClient.Execute(context.Background(), params, nil)
 	if err != nil {
 		t.Fatalf("FPM request failed: %v", err)
 	}

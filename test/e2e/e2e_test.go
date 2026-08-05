@@ -210,7 +210,7 @@ func (c *TestContext) Request(params map[string]string, body string) (int, map[s
 		}
 	}
 
-	stdout, stderr, endReq, err := c.Client.Execute(params, stdin)
+	stdout, stderr, endReq, err := c.Client.Execute(context.Background(), params, stdin)
 	if err != nil {
 		// Reconnect on connection error and retry once.
 		if strings.Contains(err.Error(), "EOF") || strings.Contains(err.Error(), "broken pipe") {
@@ -220,7 +220,7 @@ func (c *TestContext) Request(params map[string]string, body string) (int, map[s
 				return 0, nil, "", fmt.Errorf("reconnect failed: %w", connErr)
 			}
 			c.Client = newClient
-			stdout, stderr, endReq, err = c.Client.Execute(params, stdin)
+			stdout, stderr, endReq, err = c.Client.Execute(context.Background(), params, stdin)
 		}
 		if err != nil {
 			return 0, nil, "", fmt.Errorf("fastcgi execute: %w\nstderr: %s", err, string(stderr))

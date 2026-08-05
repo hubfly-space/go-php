@@ -105,6 +105,11 @@ func (sm *SiteManager) StartSite(cfg SiteConfig) error {
 
 	errCh := make(chan error, 1)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil && sm.logger != nil {
+				sm.logger.Error("site server goroutine panic recovered", "site", cfg.ID, "panic", r)
+			}
+		}()
 		sm.logger.Info("site server starting", "site", cfg.ID, "addr", addr, "webroot", cfg.Webroot)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			sm.logger.Error("site server failed", "site", cfg.ID, "error", err)
@@ -310,7 +315,7 @@ func (h *siteHandler) servePHP(w http.ResponseWriter, r *http.Request, absPath s
 
 	done := make(chan result, 1)
 	go func() {
-		stdout, stderr, endReq, err := client.Execute(params, stdin)
+		stdout, stderr, endReq, err := client.Execute(ctx, params, stdin)
 		done <- result{stdout, stderr, endReq, err}
 	}()
 
