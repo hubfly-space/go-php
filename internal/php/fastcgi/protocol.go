@@ -144,6 +144,122 @@ func (c *Client) Execute(ctx context.Context, params map[string]string, stdin io
 	return c.readResponse(ctx, reqID)
 }
 
+// ResponseStream provides streaming access to FastCGI STDOUT records.
+type ResponseStream struct {
+	client    *Client
+	reqID     uint16
+	ctx       context.Context
+	buf       bytes.Buffer
+	endReq    *EndRequestData
+	stderrBuf bytes.Buffer
+	done      bool
+	closed    bool
+}
+
+// Read implements io.Reader for ResponseStream.
+func (rs *ResponseStream) Read(p []byte) (n int, err error) {
+	if rs.closed {
+		return 0, io.ErrClosedPipe
+	}
+	for rs.buf.Len() == 0 && !rs.done {
+		select {
+		case <-rs.ctx.Done():
+			return 0, rs.ctx.Err()
+		default:
+		}
+
+		rec, err := rs.client.readRecord()
+		if err != nil {
+			return 0, err
+		}
+		if rec.RequestID != rs.reqID {
+			continue
+		}
+
+		switch rec.Type {
+		case typeStdout:
+			if len(rec.Content) > 0 {
+				rs.buf.Write(rec.Content)
+			}
+		case typeStderr:
+			if len(rec.Content) > 0 {
+				rs.stderrBuf.Write(rec.Content)
+			}
+		case typeEndRequest:
+			rs.done = true
+			if len(rec.Content) >= 8 {
+				rs.endReq = &EndRequestData{
+					AppStatus:      int32(binary.BigEndian.Uint32(rec.Content[0:4])),
+					ProtocolStatus: ProtocolStatus(binary.BigEndian.Uint32(rec.Content[4:8])),
+				}
+			}
+		}
+	}
+
+	if rs.buf.Len() > 0 {
+		return rs.buf.Read(p)
+	}
+
+	if rs.done {
+		return 0, io.EOF
+	}
+
+	return 0, nil
+}
+
+// Close implements io.Closer for ResponseStream.
+func (rs *ResponseStream) Close() error {
+	rs.closed = true
+	return nil
+}
+
+// EndRequest returns the EndRequestData after the stream finishes, or nil if still streaming.
+func (rs *ResponseStream) EndRequest() *EndRequestData {
+	return rs.endReq
+}
+
+// Stderr returns any collected stderr bytes.
+func (rs *ResponseStream) Stderr() []byte {
+	return rs.stderrBuf.Bytes()
+}
+
+// ExecuteStream sends a FastCGI request and returns a ResponseStream for reading response body chunks.
+func (c *Client) ExecuteStream(ctx context.Context, params map[string]string, stdin io.Reader) (*ResponseStream, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	c.mu.Lock()
+	reqID := c.nextID
+	c.nextID++
+	c.mu.Unlock()
+
+	if dl, ok := ctx.Deadline(); ok {
+		_ = c.conn.SetDeadline(dl)
+	} else {
+		_ = c.conn.SetDeadline(time.Now().Add(60 * time.Second))
+	}
+
+	if err := c.sendBeginRequest(reqID); err != nil {
+		return nil, err
+	}
+	if err := c.sendParams(reqID, params); err != nil {
+		return nil, err
+	}
+	if err := c.sendStdin(reqID, stdin); err != nil {
+		return nil, err
+	}
+
+	return &ResponseStream{
+		client: c,
+		reqID:  reqID,
+		ctx:    ctx,
+	}, nil
+}
+
 func (c *Client) sendBeginRequest(reqID uint16) error {
 	content := make([]byte, 8)
 	binary.BigEndian.PutUint16(content[0:2], roleResponder)
