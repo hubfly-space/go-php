@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -406,9 +407,26 @@ func runIncident(args []string) error {
 	return nil
 }
 
-// runService handles systemd service file installation.
+// runService handles systemd service file installation and lifecycle management.
 func runService(args []string) error {
-	serviceContent := `[Unit]
+	subcommand := "install"
+	if len(args) > 0 {
+		subcommand = args[0]
+	}
+
+	switch subcommand {
+	case "start", "stop", "reload", "status":
+		fmt.Printf("Executing service %s via systemctl...\n", subcommand)
+		cmd := exec.Command("systemctl", subcommand, "gateway")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("service %s: %w", subcommand, err)
+		}
+		return nil
+
+	case "install":
+		serviceContent := `[Unit]
 Description=Go-PHP Gateway Server
 After=network.target
 
@@ -423,17 +441,21 @@ LimitNOFILE=65536
 [Install]
 WantedBy=multi-user.target
 `
-	target := "/etc/systemd/system/gateway.service"
-	if err := os.WriteFile(target, []byte(serviceContent), 0644); err != nil {
-		fmt.Println("\033[1;33mSystemd service template:\033[0m")
-		fmt.Println(serviceContent)
-		fmt.Printf("\033[33mNote: Could not write directly to %s (permission denied). Run with sudo or save manually.\033[0m\n", target)
-		return nil
-	}
+		target := "/etc/systemd/system/gateway.service"
+		if err := os.WriteFile(target, []byte(serviceContent), 0644); err != nil {
+			fmt.Println("\033[1;33mSystemd service template:\033[0m")
+			fmt.Println(serviceContent)
+			fmt.Printf("\033[33mNote: Could not write directly to %s (permission denied). Run with sudo or save manually.\033[0m\n", target)
+			return nil
+		}
 
-	fmt.Printf("\033[32m✓ Systemd service installed to %s\033[0m\n", target)
-	fmt.Println("To enable and start:")
-	fmt.Println("  sudo systemctl daemon-reload")
-	fmt.Println("  sudo systemctl enable --now gateway")
-	return nil
+		fmt.Printf("\033[32m✓ Systemd service installed to %s\033[0m\n", target)
+		fmt.Println("To enable and start:")
+		fmt.Println("  sudo systemctl daemon-reload")
+		fmt.Println("  sudo systemctl enable --now gateway")
+		return nil
+
+	default:
+		return fmt.Errorf("unknown service subcommand: %s (expected install, start, stop, reload, status)", subcommand)
+	}
 }
