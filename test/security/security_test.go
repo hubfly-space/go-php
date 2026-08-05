@@ -111,7 +111,7 @@ func TestSensitiveFileAccess(t *testing.T) {
 			}
 			rf.Close()
 			// If we reach here, the file was accessible.
-			t.Logf("WARNING: %s is accessible (should be protected)", f)
+			t.Errorf("sensitive file %s is accessible (should be protected)", f)
 		})
 	}
 }
@@ -213,10 +213,18 @@ func TestAdminAPIAuth(t *testing.T) {
 
 // TestRateLimiting verifies rate limiting behavior.
 func TestRateLimiting(t *testing.T) {
-	limiter := policy.NewEngine()
+	rl := policy.NewRateLimiter(60, 2)
+	key := "127.0.0.1"
 
-	_ = limiter // Rate limiter is tested via middleware tests.
-	t.Log("rate limiting verified via policy engine tests")
+	if !rl.Allow(key) {
+		t.Error("expected first request to be allowed")
+	}
+	if !rl.Allow(key) {
+		t.Error("expected second request to be allowed within burst")
+	}
+	if rl.Allow(key) {
+		t.Error("expected third request beyond burst to be rate limited")
+	}
 }
 
 // TestCSRFProtection verifies CSRF token validation.
@@ -301,9 +309,7 @@ func TestSymlinkAttacks(t *testing.T) {
 	}
 
 	_, err = resolver.Resolve(pp.NormalizedPath)
-	if err != nil {
-		// Good — symlink denied.
-		return
+	if err == nil {
+		t.Errorf("expected symlink resolution to be denied for %s", symlinkPath)
 	}
-	t.Log("symlink resolved (would be blocked in production with SymlinkDeny)")
 }
