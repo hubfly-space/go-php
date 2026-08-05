@@ -75,6 +75,11 @@ func ParsePath(rawTarget string) (*ParsedPath, error) {
 		return nil, ErrEncodedSlashInPath
 	}
 
+	// Detect encoded question marks in path.
+	if strings.Contains(rawPath, "%3f") || strings.Contains(rawPath, "%3F") {
+		return nil, ErrInvalidPercentEncoding
+	}
+
 	// Check for encoded backslash.
 	if strings.Contains(rawPath, "%5c") || strings.Contains(rawPath, "%5C") {
 		pp.HadBackslash = true
@@ -132,11 +137,13 @@ func percentDecode(s string) (string, error) {
 			if h1 < 0 || h2 < 0 {
 				return "", ErrInvalidPercentEncoding
 			}
-			b.WriteByte(byte(h1<<4 | h2))
+			decodedByte := byte(h1<<4 | h2)
+			if decodedByte == '%' {
+				b.WriteString("%25")
+			} else {
+				b.WriteByte(decodedByte)
+			}
 			i += 3
-		case '+':
-			b.WriteByte(' ')
-			i++
 		default:
 			b.WriteByte(s[i])
 			i++

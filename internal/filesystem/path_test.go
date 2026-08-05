@@ -194,8 +194,8 @@ func TestParsePath_PlusAsSpace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if pp.NormalizedPath != "/foo bar" {
-		t.Errorf("NormalizedPath = %q, want %q", pp.NormalizedPath, "/foo bar")
+	if pp.NormalizedPath != "/foo+bar" {
+		t.Errorf("NormalizedPath = %q, want %q", pp.NormalizedPath, "/foo+bar")
 	}
 }
 
