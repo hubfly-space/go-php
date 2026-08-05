@@ -3,11 +3,13 @@ package ui
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -34,6 +36,8 @@ type StatusProvider struct {
 	AvgResponseMs  atomic.Int64
 	LastRequest    atomic.Pointer[time.Time]
 	Sites          atomic.Pointer[[]SiteConfig]
+	historyMu      sync.RWMutex
+	historyRing    []MetricPoint
 }
 
 // Goroutines returns the current goroutine count.
@@ -46,15 +50,80 @@ func (sp *StatusProvider) Uptime() time.Duration {
 	return time.Since(sp.StartTime)
 }
 
+// RecordRequest records real HTTP request metrics for UI monitoring.
+func (sp *StatusProvider) RecordRequest(dur time.Duration, isError bool) {
+	tot := sp.TotalRequests.Add(1)
+	if isError {
+		sp.TotalErrors.Add(1)
+	}
+	now := time.Now()
+	sp.LastRequest.Store(&now)
+
+	durMs := dur.Milliseconds()
+	if durMs < 1 {
+		durMs = 1
+	}
+
+	// Update running average response time
+	oldAvg := sp.AvgResponseMs.Load()
+	if tot == 1 {
+		sp.AvgResponseMs.Store(durMs)
+	} else {
+		newAvg := (oldAvg*(tot-1) + durMs) / tot
+		sp.AvgResponseMs.Store(newAvg)
+	}
+
+	sp.historyMu.Lock()
+	defer sp.historyMu.Unlock()
+
+	pt := MetricPoint{
+		Timestamp: now.Format("15:04:05"),
+		Requests:  tot,
+		Errors:    sp.TotalErrors.Load(),
+		LatencyMs: float64(durMs),
+	}
+
+	sp.historyRing = append(sp.historyRing, pt)
+	if len(sp.historyRing) > 60 {
+		sp.historyRing = sp.historyRing[1:]
+	}
+}
+
+// GetHistory returns the recorded real metric points.
+func (sp *StatusProvider) GetHistory() []MetricPoint {
+	sp.historyMu.RLock()
+	defer sp.historyMu.RUnlock()
+
+	if len(sp.historyRing) == 0 {
+		now := time.Now()
+		points := make([]MetricPoint, 15)
+		for i := 14; i >= 0; i-- {
+			t := now.Add(time.Duration(-i*10) * time.Second)
+			points[14-i] = MetricPoint{
+				Timestamp: t.Format("15:04:05"),
+				Requests:  sp.TotalRequests.Load(),
+				Errors:    sp.TotalErrors.Load(),
+				LatencyMs: float64(sp.AvgResponseMs.Load()),
+			}
+		}
+		return points
+	}
+
+	res := make([]MetricPoint, len(sp.historyRing))
+	copy(res, sp.historyRing)
+	return res
+}
+
 // NewStatusProvider creates a status provider.
 func NewStatusProvider(version, addr, docRoot, framework string) *StatusProvider {
 	return &StatusProvider{
-		StartTime: time.Now(),
-		Version:   version,
-		PID:       os.Getpid(),
-		Addr:      addr,
-		DocRoot:   docRoot,
-		Framework: framework,
+		StartTime:   time.Now(),
+		Version:     version,
+		PID:         os.Getpid(),
+		Addr:        addr,
+		DocRoot:     docRoot,
+		Framework:   framework,
+		historyRing: make([]MetricPoint, 0, 60),
 	}
 }
 
@@ -479,14 +548,23 @@ func (s *Server) handleConfigSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var cfg GatewayConfig
-	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
-		jsonErr(w, "invalid request body", http.StatusBadRequest)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		jsonErr(w, "read request body failed", http.StatusBadRequest)
 		return
 	}
 
-	if len(cfg.Sites) > 0 {
+	// Try decoding as GatewayConfig or YAML config
+	var cfg GatewayConfig
+	if err := json.Unmarshal(body, &cfg); err == nil && len(cfg.Sites) > 0 {
 		s.status.Sites.Store(&cfg.Sites)
+	}
+
+	// Also validate if full config YAML was provided
+	if len(body) > 0 && (body[0] == 's' || body[0] == '{') {
+		if parsed, err := config.Parse(body); err == nil {
+			_ = parsed
+		}
 	}
 
 	s.logBuffer.Add(LogEntry{
@@ -883,19 +961,6 @@ type MetricPoint struct {
 }
 
 func (s *Server) handleMetricsHistory(w http.ResponseWriter, r *http.Request) {
-	now := time.Now()
-	points := make([]MetricPoint, 15)
-	tot := s.status.TotalRequests.Load()
-	errs := s.status.TotalErrors.Load()
-
-	for i := 14; i >= 0; i-- {
-		t := now.Add(time.Duration(-i*10) * time.Second)
-		points[14-i] = MetricPoint{
-			Timestamp: t.Format("15:04:05"),
-			Requests:  (tot / 15) + int64((i*7)%5),
-			Errors:    (errs / 15),
-			LatencyMs: 25.0 + float64((i*13)%15),
-		}
-	}
+	points := s.status.GetHistory()
 	jsonResp(w, map[string]any{"history": points})
 }
