@@ -1,13 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/go-php/gateway/internal/config"
@@ -368,20 +368,9 @@ func runPHP(args []string) error {
 		}
 		ver := args[1]
 		fmt.Printf("Installing PHP %s...\n", ver)
-		manifest := &gatewayRuntime.Manifest{
-			Version:  ver,
-			Platform: runtime.GOOS,
-			Arch:     runtime.GOARCH,
-			Flavor:   "standard",
-		}
-		// Register stub manifest if local directory created
-		tmpDir, err := os.MkdirTemp("", "gateway-php-*")
-		if err != nil {
-			return err
-		}
-		defer os.RemoveAll(tmpDir)
 
-		rt, err := reg.Install(manifest, tmpDir, nil)
+		installer := gatewayRuntime.NewInstaller(reg)
+		rt, err := installer.Install(context.Background(), ver)
 		if err != nil {
 			return fmt.Errorf("install runtime %s: %w", ver, err)
 		}
