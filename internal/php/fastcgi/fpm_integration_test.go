@@ -115,7 +115,7 @@ echo 'Hello from PHP ' . PHP_VERSION;
 			"REMOTE_ADDR":       "127.0.0.1",
 		}
 
-		stdout, stderr, endReq, err := c.Execute(params, nil)
+		stdout, stderr, endReq, err := c.Execute(context.Background(), params, nil)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
@@ -158,7 +158,7 @@ echo json_encode($_POST);
 		}
 
 		body := strings.NewReader("name=test&value=42")
-		stdout, _, _, err := c.Execute(params, body)
+		stdout, _, _, err := c.Execute(context.Background(), params, body)
 		if err != nil {
 			t.Fatalf("POST request failed: %v", err)
 		}
@@ -189,7 +189,7 @@ trigger_error("test warning", E_USER_WARNING);
 			"REMOTE_ADDR":       "127.0.0.1",
 		}
 
-		stdout, stderr, _, err := c.Execute(params, nil)
+		stdout, stderr, _, err := c.Execute(context.Background(), params, nil)
 		if err != nil {
 			t.Fatalf("error request failed: %v", err)
 		}
@@ -223,7 +223,7 @@ echo 'done';
 		}
 		defer slowClient.Close()
 
-		_, _, _, err = slowClient.Execute(params, nil)
+		_, _, _, err = slowClient.Execute(context.Background(), params, nil)
 		if err == nil {
 			return
 		}

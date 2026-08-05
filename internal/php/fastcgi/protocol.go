@@ -7,6 +7,7 @@ package fastcgi
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -53,6 +54,12 @@ const (
 	ProtocolUnknownRole     ProtocolStatus = ProtocolStatus(statusUnknownRole)
 )
 
+// DefaultMaxResponseSize is the maximum size (64MB) for stdout/stderr response buffers.
+const DefaultMaxResponseSize = 64 * 1024 * 1024
+
+// ErrResponseTooLarge indicates the backend response exceeded the maximum size.
+var ErrResponseTooLarge = errors.New("fastcgi: response size exceeded limit")
+
 // Record is a parsed FastCGI record.
 type Record struct {
 	Version       uint8
@@ -98,15 +105,24 @@ func (c *Client) Close() error {
 // Execute sends a FastCGI request and reads the response.
 // params is the CGI environment map. stdin is the request body.
 // It returns stdout, stderr, and the end-request status.
-func (c *Client) Execute(params map[string]string, stdin io.Reader) (stdout, stderr []byte, endReq *EndRequestData, err error) {
+func (c *Client) Execute(ctx context.Context, params map[string]string, stdin io.Reader) (stdout, stderr []byte, endReq *EndRequestData, err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, nil, err
+	}
+
 	c.mu.Lock()
 	reqID := c.nextID
 	c.nextID++
 	c.mu.Unlock()
 
-	// Set write deadline.
-	if err := c.conn.SetDeadline(time.Now().Add(60 * time.Second)); err != nil {
-		return nil, nil, nil, fmt.Errorf("fastcgi: set deadline: %w", err)
+	// Set write/read deadline based on context or default.
+	if dl, ok := ctx.Deadline(); ok {
+		_ = c.conn.SetDeadline(dl)
+	} else {
+		_ = c.conn.SetDeadline(time.Now().Add(60 * time.Second))
 	}
 
 	// Send BEGIN_REQUEST.
@@ -125,7 +141,7 @@ func (c *Client) Execute(params map[string]string, stdin io.Reader) (stdout, std
 	}
 
 	// Read response.
-	return c.readResponse(reqID)
+	return c.readResponse(ctx, reqID)
 }
 
 func (c *Client) sendBeginRequest(reqID uint16) error {
@@ -214,12 +230,21 @@ func (c *Client) sendStdin(reqID uint16, stdin io.Reader) error {
 	})
 }
 
-func (c *Client) readResponse(reqID uint16) (stdout, stderr []byte, endReq *EndRequestData, err error) {
+func (c *Client) readResponse(ctx context.Context, reqID uint16) (stdout, stderr []byte, endReq *EndRequestData, err error) {
 	var stdoutBuf, stderrBuf bytes.Buffer
 
 	for {
+		select {
+		case <-ctx.Done():
+			return nil, nil, nil, ctx.Err()
+		default:
+		}
+
 		rec, err := c.readRecord()
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, nil, nil, ctxErr
+			}
 			return nil, nil, nil, fmt.Errorf("fastcgi: read record: %w", err)
 		}
 
@@ -233,10 +258,16 @@ func (c *Client) readResponse(reqID uint16) (stdout, stderr []byte, endReq *EndR
 				// Empty STDOUT means end of stdout stream.
 				continue
 			}
+			if stdoutBuf.Len()+len(rec.Content) > DefaultMaxResponseSize {
+				return nil, nil, nil, ErrResponseTooLarge
+			}
 			stdoutBuf.Write(rec.Content)
 		case typeStderr:
 			if len(rec.Content) == 0 {
 				continue
+			}
+			if stderrBuf.Len()+len(rec.Content) > DefaultMaxResponseSize {
+				return nil, nil, nil, ErrResponseTooLarge
 			}
 			stderrBuf.Write(rec.Content)
 		case typeEndRequest:

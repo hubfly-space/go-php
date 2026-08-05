@@ -167,6 +167,11 @@ func (t *Tracer) StartCleanup(ctx context.Context, interval, maxAge time.Duratio
 
 	go func() {
 		defer close(done)
+		defer func() {
+			if r := recover(); r != nil && t.logger != nil {
+				t.logger.Error("tracer cleanup panic recovered", "panic", r)
+			}
+		}()
 
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()

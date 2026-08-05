@@ -182,6 +182,9 @@ func (prl *PerRouteLimiter) StartCleanup(ctx context.Context, interval time.Dura
 
 	go func() {
 		defer close(done)
+		defer func() {
+			_ = recover()
+		}()
 
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
