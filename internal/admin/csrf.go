@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -64,12 +65,10 @@ func (c *CSRFProtect) verifySignature(token string) bool {
 }
 
 // GenerateToken creates a new CSRF token.
-func (c *CSRFProtect) GenerateToken() string {
+func (c *CSRFProtect) GenerateToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		// crypto/rand cannot fail on supported platforms; if it somehow does,
-		// returning a predictable token would be far worse than panicking.
-		panic("admin: crypto/rand failed: " + err.Error())
+		return "", fmt.Errorf("admin: crypto/rand failed: %w", err)
 	}
 
 	mac := hmacSign(c.secret, b)
@@ -81,7 +80,7 @@ func (c *CSRFProtect) GenerateToken() string {
 	c.tokens[token] = time.Now()
 	c.evict()
 
-	return token
+	return token, nil
 }
 
 // Validate checks if a CSRF token is valid.

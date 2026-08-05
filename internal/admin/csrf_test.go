@@ -11,7 +11,10 @@ import (
 func TestCSRFProtect_GenerateAndValidate(t *testing.T) {
 	csrf := NewCSRFProtect("test-secret-key", 1*time.Hour)
 
-	token := csrf.GenerateToken()
+	token, err := csrf.GenerateToken()
+	if err != nil {
+		t.Fatalf("unexpected GenerateToken error: %v", err)
+	}
 	if token == "" {
 		t.Error("expected non-empty token")
 	}
@@ -24,7 +27,7 @@ func TestCSRFProtect_GenerateAndValidate(t *testing.T) {
 func TestCSRFProtect_Consume(t *testing.T) {
 	csrf := NewCSRFProtect("test-secret-key", 1*time.Hour)
 
-	token := csrf.GenerateToken()
+	token, _ := csrf.GenerateToken()
 
 	// First consume should succeed.
 	if !csrf.Consume(token) {
@@ -40,7 +43,7 @@ func TestCSRFProtect_Consume(t *testing.T) {
 func TestCSRFProtect_ExpiredToken(t *testing.T) {
 	csrf := NewCSRFProtect("test-secret-key", 1*time.Millisecond)
 
-	token := csrf.GenerateToken()
+	token, _ := csrf.GenerateToken()
 	time.Sleep(10 * time.Millisecond)
 
 	if csrf.Validate(token) {
@@ -92,7 +95,7 @@ func TestCSRFMiddleware_RejectsPOSTWithoutToken(t *testing.T) {
 
 func TestCSRFMiddleware_AcceptsValidToken(t *testing.T) {
 	csrf := NewCSRFProtect("test-secret", 1*time.Hour)
-	token := csrf.GenerateToken()
+	token, _ := csrf.GenerateToken()
 
 	handler := csrf.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
@@ -241,7 +244,7 @@ func TestCSRFRejectsForgedToken(t *testing.T) {
 
 func TestCSRFRejectsTamperedNonce(t *testing.T) {
 	c := NewCSRFProtect("test-secret", time.Hour)
-	token := c.GenerateToken()
+	token, _ := c.GenerateToken()
 
 	nonce, mac, _ := strings.Cut(token, ".")
 	// Flip one hex digit of the nonce, keeping the original MAC.
@@ -278,7 +281,7 @@ func TestCSRFSignatureIsSecretDependent(t *testing.T) {
 	b := NewCSRFProtect("secret-b", time.Hour)
 
 	// A token minted under one secret must not verify under another.
-	token := a.GenerateToken()
+	token, _ := a.GenerateToken()
 	if b.verifySignature(token) {
 		t.Error("a token signed with one secret verified under a different secret")
 	}
@@ -289,7 +292,7 @@ func TestCSRFSignatureIsSecretDependent(t *testing.T) {
 
 func TestCSRFTokenIsSingleUse(t *testing.T) {
 	c := NewCSRFProtect("test-secret", time.Hour)
-	token := c.GenerateToken()
+	token, _ := c.GenerateToken()
 
 	if !c.Consume(token) {
 		t.Fatal("first Consume should succeed")

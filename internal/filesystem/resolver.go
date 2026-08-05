@@ -78,8 +78,8 @@ func (r *Resolver) Resolve(normalizedPath string) (*ResolvedFile, error) {
 		return nil, ErrTraversal
 	}
 
-	// Use Lstat to detect symlinks (Stat follows them).
-	info, err := os.Lstat(absPath)
+	// Use Lstat to detect symlinks before resolution.
+	lInfo, err := os.Lstat(absPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, ErrFileNotFound
@@ -87,13 +87,12 @@ func (r *Resolver) Resolve(normalizedPath string) (*ResolvedFile, error) {
 		return nil, fmt.Errorf("filesystem: lstat: %w", err)
 	}
 
-	// Handle symlinks.
-	if info.Mode()&fs.ModeSymlink != 0 {
+	targetPath := absPath
+	if lInfo.Mode()&fs.ModeSymlink != 0 {
 		switch r.symlinks {
 		case SymlinkDeny:
 			return nil, ErrSymlinkDenied
 		case SymlinkWithinRoot:
-			// Resolve and verify target is under root.
 			realPath, err := filepath.EvalSymlinks(absPath)
 			if err != nil {
 				return nil, fmt.Errorf("filesystem: eval symlinks: %w", err)
@@ -101,45 +100,14 @@ func (r *Resolver) Resolve(normalizedPath string) (*ResolvedFile, error) {
 			if !isUnderRoot(realPath, r.root) {
 				return nil, ErrSymlinkEscape
 			}
-			// Re-stat the real target.
-			realInfo, err := os.Stat(realPath)
-			if err != nil {
-				if errors.Is(err, fs.ErrNotExist) {
-					return nil, ErrFileNotFound
-				}
-				return nil, fmt.Errorf("filesystem: stat real: %w", err)
-			}
-			if !realInfo.Mode().IsRegular() {
-				return nil, ErrNotRegularFile
-			}
-			// Open the real file.
-			f, err := os.Open(realPath)
-			if err != nil {
-				return nil, fmt.Errorf("filesystem: open real: %w", err)
-			}
-			return &ResolvedFile{
-				RealPath: realPath,
-				Info:     realInfo,
-				F:        f,
-			}, nil
+			targetPath = realPath
 		default:
 			return nil, ErrSymlinkDenied
 		}
 	}
 
-	// Verify it's a regular file.
-	if !info.Mode().IsRegular() {
-		return nil, ErrNotRegularFile
-	}
-
-	// Deny special files (devices, sockets, pipes).
-	mode := info.Mode()
-	if mode&fs.ModeDevice != 0 || mode&fs.ModeNamedPipe != 0 || mode&fs.ModeSocket != 0 {
-		return nil, ErrSpecialFile
-	}
-
-	// Open the file.
-	f, err := os.Open(absPath)
+	// Open file handle first to prevent check-then-open TOCTOU races.
+	f, err := os.Open(targetPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, ErrFileNotFound
@@ -147,8 +115,28 @@ func (r *Resolver) Resolve(normalizedPath string) (*ResolvedFile, error) {
 		return nil, fmt.Errorf("filesystem: open: %w", err)
 	}
 
+	// Inspect file properties on the open file handle directly.
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, fmt.Errorf("filesystem: handle stat: %w", err)
+	}
+
+	// Verify it's a regular file using handle stat.
+	if !info.Mode().IsRegular() {
+		f.Close()
+		return nil, ErrNotRegularFile
+	}
+
+	// Deny special files (devices, sockets, pipes) on open handle.
+	mode := info.Mode()
+	if mode&fs.ModeDevice != 0 || mode&fs.ModeNamedPipe != 0 || mode&fs.ModeSocket != 0 {
+		f.Close()
+		return nil, ErrSpecialFile
+	}
+
 	return &ResolvedFile{
-		RealPath: absPath,
+		RealPath: targetPath,
 		Info:     info,
 		F:        f,
 	}, nil

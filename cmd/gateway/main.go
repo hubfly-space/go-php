@@ -961,7 +961,7 @@ func (h *gatewayHandler) servePHP(w http.ResponseWriter, r *http.Request, st *se
 
 	done := make(chan result, 1)
 	go func() {
-		stdout, stderr, endReq, err := client.Execute(params, stdin)
+		stdout, stderr, endReq, err := client.Execute(ctx, params, stdin)
 		done <- result{stdout, stderr, endReq, err}
 	}()
 
