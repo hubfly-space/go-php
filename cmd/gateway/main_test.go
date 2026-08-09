@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -145,5 +146,54 @@ func TestBuildRouter(t *testing.T) {
 	}
 	if matched.Target != "/index.php" {
 		t.Errorf("expected target /index.php, got %q", matched.Target)
+	}
+}
+
+func TestProxyRouting(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Backend-Proxied", "true")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("Proxied backend response"))
+	}))
+	defer backend.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.Routes = []config.RouteConfig{
+		{
+			PathPrefix: "/proxy/",
+			Target:     backend.URL,
+		},
+	}
+
+	routerEngine, err := buildRouter(cfg)
+	if err != nil {
+		t.Fatalf("buildRouter failed: %v", err)
+	}
+
+	proxies, err := buildProxies(cfg)
+	if err != nil {
+		t.Fatalf("buildProxies failed: %v", err)
+	}
+
+	handler := &gatewayHandler{}
+	handler.state.Store(&serveState{
+		cfg:     cfg,
+		router:  routerEngine,
+		proxies: proxies,
+	})
+
+	req := httptest.NewRequest("GET", "/proxy/test", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", rec.Code)
+	}
+	if rec.Header().Get("X-Backend-Proxied") != "true" {
+		t.Errorf("expected X-Backend-Proxied header from backend")
+	}
+	if rec.Body.String() != "Proxied backend response" {
+		t.Errorf("expected body 'Proxied backend response', got %q", rec.Body.String())
 	}
 }

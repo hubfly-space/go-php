@@ -25,6 +25,7 @@ import (
 	"github.com/go-php/gateway/internal/php/cgi"
 	"github.com/go-php/gateway/internal/php/fastcgi"
 	"github.com/go-php/gateway/internal/policy"
+	"github.com/go-php/gateway/internal/proxy"
 	"github.com/go-php/gateway/internal/router"
 	"github.com/go-php/gateway/internal/runtime"
 	"github.com/go-php/gateway/internal/supervisor"
@@ -155,7 +156,7 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr str
 		var err error
 		cfg, err = config.Load(configPath)
 		if err != nil {
-			return fmt.Errorf("load config: %w", err)
+			return errors.Wrap(errors.CodeConfigInvalid, "load config", err)
 		}
 	}
 
@@ -401,6 +402,11 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr str
 	})
 	defer pool.Close()
 
+	proxies, err := buildProxies(cfg)
+	if err != nil {
+		return err
+	}
+
 	handler := &gatewayHandler{
 		docRoot:     absRoot,
 		fpm:         fpm,
@@ -410,7 +416,7 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr str
 		logger:      logger,
 	}
 	handler.state.Store(&serveState{cfg: cfg, resolver: resolver, router: routingEngine,
-		cachePolicy: buildCachePolicy(cfg)})
+		cachePolicy: buildCachePolicy(cfg), proxies: proxies})
 
 	// The reloader owns the published config snapshot; the handler owns the
 	// derived request-path components. SIGHUP updates both together.
@@ -607,6 +613,28 @@ func buildRouter(cfg *config.Config) (*router.Engine, error) {
 	return engine, nil
 }
 
+// buildProxies constructs ReverseProxy instances for all upstream routes.
+func buildProxies(cfg *config.Config) (map[string]*proxy.Proxy, error) {
+	proxies := make(map[string]*proxy.Proxy)
+	for _, rc := range cfg.Routes {
+		target := rc.Target
+		if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
+			if _, exists := proxies[target]; !exists {
+				p, err := proxy.NewProxy(proxy.ProxyConfig{
+					Target:            target,
+					Timeout:           cfg.Server.WriteTimeout,
+					PassXForwardedFor: true,
+				})
+				if err != nil {
+					return nil, fmt.Errorf("create proxy for target %q: %w", target, err)
+				}
+				proxies[target] = p
+			}
+		}
+	}
+	return proxies, nil
+}
+
 // serveState is the set of request-path components derived from configuration.
 // It is immutable once published; a reload builds a whole new one and swaps the
 // pointer, so an in-flight request keeps the state it started with (§39.1).
@@ -615,6 +643,7 @@ type serveState struct {
 	resolver    *filesystem.Resolver
 	router      *router.Engine
 	cachePolicy *filesystem.CachePolicy
+	proxies     map[string]*proxy.Proxy
 }
 
 // buildCachePolicy derives the static cache policy from config, or nil when
@@ -682,6 +711,11 @@ func (h *gatewayHandler) reload(configPath string, reloader *config.Reloader) er
 		return err
 	}
 
+	newProxies, err := buildProxies(newCfg)
+	if err != nil {
+		return err
+	}
+
 	symlinkMode := filesystem.SymlinkWithinRoot
 	if newCfg.Security.SymlinkMode == "deny" {
 		symlinkMode = filesystem.SymlinkDeny
@@ -701,7 +735,7 @@ func (h *gatewayHandler) reload(configPath string, reloader *config.Reloader) er
 		return err
 	}
 	h.state.Store(&serveState{cfg: newCfg, resolver: newResolver, router: newRouter,
-		cachePolicy: buildCachePolicy(newCfg)})
+		cachePolicy: buildCachePolicy(newCfg), proxies: newProxies})
 
 	// Be explicit about what a reload does not cover, rather than letting an
 	// operator believe a change took effect when it did not.
@@ -756,6 +790,14 @@ func (h *gatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, target, route.Status)
 			return
 		}
+
+		if strings.HasPrefix(route.Target, "http://") || strings.HasPrefix(route.Target, "https://") {
+			if p, ok := st.proxies[route.Target]; ok {
+				p.ServeHTTP(w, r)
+				return
+			}
+		}
+
 		// Rewrite the request path.
 		normalized = route.Rewrite(normalized)
 	}
@@ -1160,5 +1202,3 @@ func detectMIME(path string) string {
 	}
 }
 
-// Ensure errors package is used.
-var _ = errors.IsCode

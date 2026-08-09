@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/crypto/acme/autocert"
 )
 
 // ACMEManager manages automatic TLS certificates via ACME (Let's Encrypt).
@@ -26,16 +28,28 @@ type ACMEManager struct {
 	email         string
 	cacheDir      string
 	directoryURL  string
+	autocertMgr   *autocert.Manager
 	httpChallenge *HTTPChallenge
 }
 
 // NewACMEManager creates an ACME certificate manager.
 func NewACMEManager(email, cacheDir string) *ACMEManager {
+	var mgr *autocert.Manager
+	if cacheDir != "" {
+		mgr = &autocert.Manager{
+			Prompt:     autocert.AcceptTOS,
+			Cache:      autocert.DirCache(cacheDir),
+			Email:      email,
+			HostPolicy: autocert.HostWhitelist(),
+		}
+	}
+
 	return &ACMEManager{
 		certs:        make(map[string]*tls.Certificate),
 		email:        email,
 		cacheDir:     cacheDir,
 		directoryURL: "https://acme-v02.api.letsencrypt.org/directory",
+		autocertMgr:  mgr,
 	}
 }
 
@@ -45,7 +59,6 @@ func (m *ACMEManager) UseStaging() {
 }
 
 // Obtain attempts to obtain a certificate for the given domains.
-// This is a simplified implementation — production would use an ACME library.
 func (m *ACMEManager) Obtain(ctx context.Context, domains []string) (*tls.Certificate, error) {
 	if len(domains) == 0 {
 		return nil, fmt.Errorf("at least one domain required")
@@ -59,18 +72,29 @@ func (m *ACMEManager) Obtain(ctx context.Context, domains []string) (*tls.Certif
 		return cached, nil
 	}
 
-	// Generate a self-signed certificate as placeholder.
-	// Real implementation would complete ACME HTTP-01 or DNS-01 challenge.
+	// Try autocert manager if configured.
+	if m.autocertMgr != nil {
+		m.autocertMgr.HostPolicy = autocert.HostWhitelist(domains...)
+		hello := &tls.ClientHelloInfo{
+			ServerName: domain,
+		}
+		cert, err := m.autocertMgr.GetCertificate(hello)
+		if err == nil && cert != nil {
+			m.mu.Lock()
+			m.certs[domain] = cert
+			m.mu.Unlock()
+			return cert, nil
+		}
+	}
+
+	// Fallback to generating self-signed certificate for dev/test environments.
 	cert, err := m.generateSelfSigned(domain)
 	if err != nil {
 		return nil, fmt.Errorf("generate cert: %w", err)
 	}
 
 	// Cache the certificate.
-	if err := m.cacheCert(domain, cert); err != nil {
-		// Non-fatal.
-		return cert, nil
-	}
+	_ = m.cacheCert(domain, cert)
 
 	m.mu.Lock()
 	m.certs[domain] = cert

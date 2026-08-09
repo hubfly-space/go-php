@@ -113,6 +113,15 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
+// Abort sends an FCGI_ABORT_REQUEST record for the given request ID.
+func (c *Client) Abort(reqID uint16) error {
+	return c.writeRecord(Record{
+		Version:   protoVersion,
+		Type:      typeAbortReq,
+		RequestID: reqID,
+	})
+}
+
 // Execute sends a FastCGI request and reads the response.
 // params is the CGI environment map. stdin is the request body.
 // It returns stdout, stderr, and the end-request status.
@@ -175,6 +184,7 @@ func (rs *ResponseStream) Read(p []byte) (n int, err error) {
 	for rs.buf.Len() == 0 && !rs.done {
 		select {
 		case <-rs.ctx.Done():
+			_ = rs.client.Abort(rs.reqID)
 			return 0, rs.ctx.Err()
 		default:
 		}
