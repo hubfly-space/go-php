@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
 	"github.com/go-php/gateway/internal/buildinfo"
 )
 

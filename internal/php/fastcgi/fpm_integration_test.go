@@ -3,6 +3,7 @@
 package fastcgi
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"

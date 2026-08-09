@@ -1201,4 +1201,3 @@ func detectMIME(path string) string {
 		return "application/octet-stream"
 	}
 }
-
