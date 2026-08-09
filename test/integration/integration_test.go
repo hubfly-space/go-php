@@ -127,7 +127,7 @@ security.limit_extensions = .php
 	})
 
 	// Connect to FPM.
-	client, err := fastcgi.NewClient(socketPath, 5*time.Second)
+	client, err := fastcgi.NewUnixClient(socketPath, 5*time.Second)
 	if err != nil {
 		t.Skipf("failed to connect to php-fpm: %v", err)
 	}
