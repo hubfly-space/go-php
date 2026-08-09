@@ -10,12 +10,15 @@ package security
 
 import (
 	"io"
+	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/go-php/gateway/internal/admin"
 	"github.com/go-php/gateway/internal/filesystem"
 	"github.com/go-php/gateway/internal/php/cgi"
 	"github.com/go-php/gateway/internal/policy"
@@ -168,44 +171,42 @@ func TestResponseAttackHeaders(t *testing.T) {
 	}
 }
 
-// TestAdminAPIAuth verifies admin API authentication.
+// TestAdminAPIAuth verifies admin API authentication using actual admin.Guard.
 func TestAdminAPIAuth(t *testing.T) {
+	g := admin.NewGuard(admin.GuardConfig{
+		Token:       "secret123",
+		PublicPaths: []string{"/api/health"},
+	}, slog.Default())
+
+	target := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	protected := g.Wrap(target)
+
 	tests := []struct {
 		name       string
-		token      string
+		path       string
 		authHeader string
 		wantCode   int
 	}{
-		{"no token configured", "", "", 200},
-		{"valid token", "secret123", "Bearer secret123", 200},
-		{"wrong token", "secret123", "Bearer wrong", 401},
-		{"missing auth header", "secret123", "", 401},
-		{"no bearer prefix", "secret123", "secret123", 401},
+		{"public path without token", "/api/health", "", 200},
+		{"valid token", "/api/status", "Bearer secret123", 200},
+		{"wrong token", "/api/status", "Bearer wrong", 401},
+		{"missing auth header", "/api/status", "", 401},
+		{"no bearer prefix", "/api/status", "secret123", 401},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "/api/status", nil)
+			req := httptest.NewRequest("GET", tt.path, nil)
 			if tt.authHeader != "" {
 				req.Header.Set("Authorization", tt.authHeader)
 			}
+			rec := httptest.NewRecorder()
+			protected.ServeHTTP(rec, req)
 
-			// Simulate auth check.
-			authenticated := true
-			if tt.token != "" {
-				if !strings.HasPrefix(tt.authHeader, "Bearer ") {
-					authenticated = false
-				} else {
-					bearerToken := strings.TrimPrefix(tt.authHeader, "Bearer ")
-					authenticated = bearerToken == tt.token
-				}
-			}
-
-			if authenticated && tt.wantCode != 200 {
-				t.Errorf("expected auth failure but got authenticated")
-			}
-			if !authenticated && tt.wantCode == 200 {
-				t.Errorf("expected auth success but got unauthenticated")
+			if rec.Code != tt.wantCode {
+				t.Errorf("expected status code %d, got %d", tt.wantCode, rec.Code)
 			}
 		})
 	}
@@ -227,20 +228,38 @@ func TestRateLimiting(t *testing.T) {
 	}
 }
 
-// TestCSRFProtection verifies CSRF token validation.
+// TestCSRFProtection verifies CSRF / Origin protection via admin.Guard.
 func TestCSRFProtection(t *testing.T) {
-	// Test that mutating requests require CSRF tokens.
-	methods := []string{"POST", "PUT", "PATCH", "DELETE"}
+	g := admin.NewGuard(admin.GuardConfig{
+		Token:          "secret123",
+		AllowedOrigins: []string{"http://localhost:30200"},
+	}, slog.Default())
 
-	for _, method := range methods {
-		t.Run(method, func(t *testing.T) {
-			req := httptest.NewRequest(method, "/api/test", nil)
-			// No CSRF token.
+	target := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	protected := g.Wrap(target)
 
-			if req.Method == "GET" || req.Method == "HEAD" || req.Method == "OPTIONS" {
-				t.Error("GET/HEAD/OPTIONS should not require CSRF")
-			}
-		})
+	// Cross-origin POST request with invalid origin should be rejected.
+	req := httptest.NewRequest("POST", "/api/config", nil)
+	req.Header.Set("Authorization", "Bearer secret123")
+	req.Header.Set("Origin", "http://evil.com")
+	rec := httptest.NewRecorder()
+
+	protected.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("expected cross-origin request to be rejected with 403, got %d", rec.Code)
+	}
+
+	// Request with allowed origin should pass.
+	req2 := httptest.NewRequest("POST", "/api/config", nil)
+	req2.Header.Set("Authorization", "Bearer secret123")
+	req2.Header.Set("Origin", "http://localhost:30200")
+	rec2 := httptest.NewRecorder()
+
+	protected.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Errorf("expected allowed origin request to succeed with 200, got %d", rec2.Code)
 	}
 }
 
