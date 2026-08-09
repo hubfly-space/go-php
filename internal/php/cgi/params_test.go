@@ -131,3 +131,17 @@ func TestBuildParams_RedirectStatus(t *testing.T) {
 		t.Errorf("REDIRECT_STATUS = %q, want %q", params["REDIRECT_STATUS"], "200")
 	}
 }
+
+func TestBuildParams_Httpoxy(t *testing.T) {
+	req := httptest.NewRequest("GET", "/index.php", nil)
+	req.Header.Set("Proxy", "http://attacker.com:8080")
+	req.Header.Set("X-Normal-Header", "allowed")
+
+	params := BuildParams(req, "/app/index.php", "/index.php", "/app")
+	if _, exists := params["HTTP_PROXY"]; exists {
+		t.Errorf("HTTP_PROXY should be omitted to prevent httpoxy vulnerability, but was set to %q", params["HTTP_PROXY"])
+	}
+	if params["HTTP_X_NORMAL_HEADER"] != "allowed" {
+		t.Errorf("HTTP_X_NORMAL_HEADER = %q, want %q", params["HTTP_X_NORMAL_HEADER"], "allowed")
+	}
+}

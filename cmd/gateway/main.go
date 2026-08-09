@@ -391,12 +391,22 @@ func runServe(flagAddr, phpFPMPath, configPath string, args []string, uiAddr str
 
 	logger := slog.Default()
 
+	pool := fastcgi.NewPool(fastcgi.PoolConfig{
+		Network:     "unix",
+		Address:     sockPath,
+		MaxIdle:     20,
+		MaxActive:   100,
+		IdleTimeout: 60 * time.Second,
+	})
+	defer pool.Close()
+
 	handler := &gatewayHandler{
-		docRoot:  absRoot,
-		fpm:      fpm,
-		watchdog: watchdog,
-		sockPath: sockPath,
-		logger:   logger,
+		docRoot:     absRoot,
+		fpm:         fpm,
+		watchdog:    watchdog,
+		sockPath:    sockPath,
+		fastcgiPool: pool,
+		logger:      logger,
 	}
 	handler.state.Store(&serveState{cfg: cfg, resolver: resolver, router: routingEngine,
 		cachePolicy: buildCachePolicy(cfg)})
@@ -621,11 +631,12 @@ func buildCachePolicy(cfg *config.Config) *filesystem.CachePolicy {
 }
 
 type gatewayHandler struct {
-	docRoot  string
-	fpm      *supervisor.Supervisor
-	watchdog *supervisor.Watchdog
-	sockPath string
-	logger   *slog.Logger
+	docRoot     string
+	fpm         *supervisor.Supervisor
+	watchdog    *supervisor.Watchdog
+	sockPath    string
+	fastcgiPool *fastcgi.Pool
+	logger      *slog.Logger
 
 	// state is read once per request and never mutated in place.
 	state atomic.Pointer[serveState]
@@ -913,13 +924,40 @@ func (h *gatewayHandler) servePHP(w http.ResponseWriter, r *http.Request, st *se
 
 	params := cgi.BuildParams(r, scriptPath, scriptName, h.docRoot)
 
-	client, err := fastcgi.NewClient(h.sockPath, 5*time.Second)
-	if err != nil {
-		h.logger.Error("fastcgi connect failed", "request_id", reqID, "error", err)
-		h.devError(w, r, 502, "Bad Gateway", "Could not connect to PHP backend.", reqID, start)
-		return
+	phpTimeout := st.cfg.PHP.RequestTimeout
+	if phpTimeout <= 0 {
+		phpTimeout = 60 * time.Second
 	}
-	defer client.Close()
+	ctx, cancel := context.WithTimeout(r.Context(), phpTimeout)
+	defer cancel()
+
+	var client *fastcgi.Client
+	if h.fastcgiPool != nil {
+		var getErr error
+		client, getErr = h.fastcgiPool.Get(ctx)
+		if getErr != nil {
+			h.logger.Error("fastcgi pool get failed", "request_id", reqID, "error", getErr)
+			h.devError(w, r, 502, "Bad Gateway", "Could not acquire connection to PHP backend.", reqID, start)
+			return
+		}
+	} else {
+		var dialErr error
+		client, dialErr = fastcgi.NewUnixClient(h.sockPath, 5*time.Second)
+		if dialErr != nil {
+			h.logger.Error("fastcgi connect failed", "request_id", reqID, "error", dialErr)
+			h.devError(w, r, 502, "Bad Gateway", "Could not connect to PHP backend.", reqID, start)
+			return
+		}
+	}
+
+	var execErr error
+	defer func() {
+		if h.fastcgiPool != nil {
+			h.fastcgiPool.Put(client, execErr)
+		} else if client != nil {
+			_ = client.Close()
+		}
+	}()
 
 	// Enforce the configured body limit before handing the request to PHP
 	// (§24.1). Content-Length is checked first so an oversized upload is
@@ -945,62 +983,36 @@ func (h *gatewayHandler) servePHP(w http.ResponseWriter, r *http.Request, st *se
 		}
 	}
 
-	phpTimeout := st.cfg.PHP.RequestTimeout
-	if phpTimeout <= 0 {
-		phpTimeout = 60 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), phpTimeout)
-	defer cancel()
-
-	type result struct {
-		stdout []byte
-		stderr []byte
-		endReq *fastcgi.EndRequestData
-		err    error
-	}
-
-	done := make(chan result, 1)
-	go func() {
-		stdout, stderr, endReq, err := client.Execute(ctx, params, stdin)
-		done <- result{stdout, stderr, endReq, err}
-	}()
-
-	select {
-	case <-ctx.Done():
-		h.logger.Warn("php timeout", "request_id", reqID, "duration_ms", time.Since(start).Milliseconds())
-		h.devError(w, r, 504, "Gateway Timeout", "PHP execution timed out.", reqID, start)
+	stream, err := client.ExecuteStream(ctx, params, stdin)
+	if err != nil {
+		execErr = err
+		h.logger.Error("fastcgi execute failed", "request_id", reqID, "error", err)
+		h.devError(w, r, 502, "Bad Gateway", fmt.Sprintf("PHP execution failed: %v", err), reqID, start)
 		return
-	case res := <-done:
-		if res.err != nil {
-			h.logger.Error("php execution failed", "request_id", reqID, "error", res.err)
-			h.devError(w, r, 502, "Bad Gateway", fmt.Sprintf("PHP error: %v", res.err), reqID, start)
-			return
-		}
-
-		resp, err := cgi.ParseResponse(res.stdout, res.stderr)
-		if err != nil {
-			h.logger.Error("php response parse failed", "request_id", reqID, "error", err)
-			h.devError(w, r, 502, "Bad Gateway", "Invalid PHP response.", reqID, start)
-			return
-		}
-
-		if res.endReq != nil && res.endReq.ProtocolStatus != fastcgi.ProtocolRequestComplete {
-			h.logger.Error("php protocol error", "request_id", reqID,
-				"app_status", res.endReq.AppStatus,
-				"proto_status", res.endReq.ProtocolStatus)
-		}
-
-		for k, vv := range resp.Headers {
-			for _, v := range vv {
-				w.Header().Add(k, v)
-			}
-		}
-		w.WriteHeader(resp.StatusCode)
-		io.Copy(w, resp.Body)
-
-		h.logger.Info("php", "request_id", reqID, "path", r.URL.Path,
-			"status", resp.StatusCode, "duration_ms", time.Since(start).Milliseconds())
 	}
+	defer stream.Close()
+
+	resp, err := cgi.ParseResponseStream(stream, nil)
+	if err != nil {
+		execErr = err
+		h.logger.Error("php response parse failed", "request_id", reqID, "error", err)
+		h.devError(w, r, 502, "Bad Gateway", "Invalid PHP response.", reqID, start)
+		return
+	}
+
+	for k, vv := range resp.Headers {
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+
+	if resp.Body != nil {
+		_, execErr = io.Copy(w, resp.Body)
+	}
+
+	h.logger.Info("php", "request_id", reqID, "path", r.URL.Path,
+		"status", resp.StatusCode, "duration_ms", time.Since(start).Milliseconds())
 }
 
 func (h *gatewayHandler) devError(w http.ResponseWriter, r *http.Request, status int, title, detail, reqID string, start time.Time) {

@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"github.com/go-php/gateway/internal/buildinfo"
 )
 
 // BuildParams constructs the CGI/FastCGI environment variables for a PHP request.
@@ -13,9 +14,14 @@ import (
 func BuildParams(r *http.Request, scriptFilename, scriptName, documentRoot string) map[string]string {
 	params := make(map[string]string)
 
+	version := buildinfo.Get().Version
+	if version == "" {
+		version = "1.0"
+	}
+
 	// CGI standard variables.
 	params["GATEWAY_INTERFACE"] = "CGI/1.1"
-	params["SERVER_SOFTWARE"] = "go-php-gateway/1.0"
+	params["SERVER_SOFTWARE"] = "go-php-gateway/" + version
 	params["SERVER_PROTOCOL"] = r.Proto
 
 	params["REQUEST_METHOD"] = r.Method
@@ -69,6 +75,9 @@ func BuildParams(r *http.Request, scriptFilename, scriptName, documentRoot strin
 
 	// HTTP_* variables from request headers.
 	for name, values := range r.Header {
+		if strings.EqualFold(name, "Proxy") {
+			continue // Mitigate httpoxy vulnerability
+		}
 		cgiName := "HTTP_" + httpHeaderToCGI(name)
 		params[cgiName] = strings.Join(values, ", ")
 	}

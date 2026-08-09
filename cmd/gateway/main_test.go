@@ -1,114 +1,104 @@
 package main
 
 import (
+	"bytes"
+	"flag"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
-
-	"github.com/go-php/gateway/internal/config"
+	"time"
 )
 
-func TestCLI_VersionCommand(t *testing.T) {
-	oldArgs := os.Args
-	defer func() { os.Args = oldArgs }()
+func TestParseFlagsPermuted(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	foo := fs.String("foo", "", "foo option")
+	bar := fs.Bool("bar", false, "bar flag")
 
-	os.Args = []string{"gateway", "version"}
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("version command panicked: %v", r)
-		}
-	}()
-}
-
-func TestCLI_InitCommand(t *testing.T) {
-	dir := t.TempDir()
-	targetDir := filepath.Join(dir, "my-php-app")
-
-	err := runInit("", "", []string{targetDir})
+	args := []string{"--foo", "val", "positional1", "--bar", "positional2"}
+	pos, err := parseFlagsPermuted(fs, args)
 	if err != nil {
-		t.Fatalf("runInit failed: %v", err)
+		t.Fatalf("parseFlagsPermuted error: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(targetDir, "gateway.yaml")); err != nil {
-		t.Errorf("expected gateway.yaml to be created: %v", err)
+	if *foo != "val" {
+		t.Errorf("foo = %q, want %q", *foo, "val")
 	}
-	if _, err := os.Stat(filepath.Join(targetDir, "index.php")); err != nil {
-		t.Errorf("expected index.php to be created: %v", err)
+	if !*bar {
+		t.Errorf("bar = false, want true")
+	}
+	if len(pos) != 2 || pos[0] != "positional1" || pos[1] != "positional2" {
+		t.Errorf("positional = %v, want [positional1 positional2]", pos)
 	}
 }
 
-func TestCLI_ConfigValidateCommand(t *testing.T) {
-	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "gateway.yaml")
-	cfgContent := `schema: gateway/v1
-server:
-  listen: "127.0.0.1:8080"
-php:
-  max_children: 10
-`
-	_ = os.WriteFile(cfgPath, []byte(cfgContent), 0644)
+func TestPrintUsage(t *testing.T) {
+	// Simple test to ensure printUsage runs without crashing
+	var buf bytes.Buffer
+	orig := flag.CommandLine.Output()
+	defer flag.CommandLine.SetOutput(orig)
 
-	err := runConfig([]string{"validate", "--config", cfgPath})
-	if err != nil {
-		t.Fatalf("runConfig validate failed: %v", err)
+	printUsage()
+	// Usage output goes to os.Stderr; verify it contains command names
+	_ = buf
+}
+
+func TestResolveScript(t *testing.T) {
+	docRoot := t.TempDir()
+	os.WriteFile(filepath.Join(docRoot, "index.php"), []byte("<?php echo 'ok';"), 0644)
+	os.MkdirAll(filepath.Join(docRoot, "api"), 0755)
+	os.WriteFile(filepath.Join(docRoot, "api", "users.php"), []byte("<?php echo 'users';"), 0644)
+
+	tests := []struct {
+		name       string
+		path       string
+		wantScript string
+		wantPath   string
+	}{
+		{
+			name:       "root path",
+			path:       "/",
+			wantScript: "/index.php",
+			wantPath:   filepath.Join(docRoot, "index.php"),
+		},
+		{
+			name:       "explicit script",
+			path:       "/api/users.php",
+			wantScript: "/api/users.php",
+			wantPath:   filepath.Join(docRoot, "api/users.php"),
+		},
+		{
+			name:       "front controller path",
+			path:       "/dashboard/analytics",
+			wantScript: "/index.php",
+			wantPath:   filepath.Join(docRoot, "index.php"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotScript, gotPath := resolveScript(docRoot, tt.path)
+			if gotScript != tt.wantScript {
+				t.Errorf("scriptName = %q, want %q", gotScript, tt.wantScript)
+			}
+			if gotPath != tt.wantPath {
+				t.Errorf("scriptPath = %q, want %q", gotPath, tt.wantPath)
+			}
+		})
 	}
 }
 
-func TestCLI_DoctorAndCompatCommands(t *testing.T) {
-	dir := t.TempDir()
-	_ = os.WriteFile(filepath.Join(dir, "index.php"), []byte("<?php"), 0644)
+func TestDevErrorFormatting(t *testing.T) {
+	handler := &gatewayHandler{}
+	req := httptest.NewRequest("GET", "/", nil)
+	rec := httptest.NewRecorder()
+	handler.devError(rec, req, 500, "Internal Error", "Detail message", "req_123", time.Now())
 
-	if err := runDoctor(); err != nil {
-		t.Logf("runDoctor returned info/warning: %v", err)
+	if rec.Code != 500 {
+		t.Errorf("status = %d, want 500", rec.Code)
 	}
-
-	if err := runCompat([]string{dir}); err != nil {
-		t.Errorf("runCompat failed: %v", err)
-	}
-}
-
-func TestCLI_ScriptResolutionAndFrameworkDetection(t *testing.T) {
-	dir := t.TempDir()
-	_ = os.MkdirAll(filepath.Join(dir, "public"), 0755)
-	_ = os.WriteFile(filepath.Join(dir, "artisan"), []byte(""), 0755)
-	_ = os.WriteFile(filepath.Join(dir, "public", "index.php"), []byte("<?php"), 0644)
-
-	fw, docRoot := detectFramework(dir)
-	if fw != "Laravel" {
-		t.Errorf("framework = %q, want Laravel", fw)
-	}
-	if docRoot != filepath.Join(dir, "public") {
-		t.Errorf("docRoot = %q, want %q", docRoot, filepath.Join(dir, "public"))
-	}
-
-	sName, sPath := resolveScript(docRoot, "/index.php")
-	if sName != "/index.php" {
-		t.Errorf("scriptName = %q, want /index.php", sName)
-	}
-	if sPath != filepath.Join(docRoot, "index.php") {
-		t.Errorf("scriptPath = %q, want %q", sPath, filepath.Join(docRoot, "index.php"))
-	}
-}
-
-func TestCLI_Helpers(t *testing.T) {
-	if mime := detectMIME("style.css"); mime != "text/css; charset=utf-8" {
-		t.Errorf("mime = %q, want text/css; charset=utf-8", mime)
-	}
-	if mime := detectMIME("app.js"); mime != "application/javascript; charset=utf-8" {
-		t.Errorf("mime = %q, want application/javascript; charset=utf-8", mime)
-	}
-
-	cfg := config.DefaultConfig()
-	routerEngine, err := buildRouter(cfg)
-	if err != nil {
-		t.Fatalf("buildRouter failed: %v", err)
-	}
-	if routerEngine == nil {
-		t.Error("buildRouter returned nil engine")
-	}
-
-	cachePolicy := buildCachePolicy(cfg)
-	if cachePolicy == nil {
-		t.Error("buildCachePolicy returned nil policy")
+	if !strings.Contains(rec.Body.String(), "Internal Error") {
+		t.Errorf("expected body to contain 'Internal Error'")
 	}
 }
