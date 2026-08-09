@@ -101,7 +101,7 @@ func TestInvariant_FastCGIParamsEncoding(t *testing.T) {
 		if k == "" {
 			t.Errorf("empty param key")
 		}
-		_, _ = buf.WriteString(fmt.Sprintf("%s=%s\n", k, v))
+		fmt.Fprintf(&buf, "%s=%s\n", k, v)
 	}
 	if buf.Len() == 0 {
 		t.Errorf("encoded params buffer is empty")

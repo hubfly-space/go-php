@@ -36,10 +36,10 @@ type Decision struct {
 
 // PolicyContext provides request details during evaluation.
 type PolicyContext struct {
-	Request   *http.Request
-	ClientIP  string
-	RouteID   string
-	Script    string
+	Request    *http.Request
+	ClientIP   string
+	RouteID    string
+	Script     string
 	Attributes map[string]interface{}
 }
 
