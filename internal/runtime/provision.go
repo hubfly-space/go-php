@@ -14,44 +14,44 @@ import (
 // extensionPackageMap maps PHP extension names to Debian package name suffixes.
 // The full package name is php{version}-{suffix} (e.g., php8.3-mysql).
 var extensionPackageMap = map[string]string{
-	"mysqli":      "mysql",
-	"pdo_mysql":   "mysql",
-	"mysqlnd":     "mysql",
-	"gd":          "gd",
-	"bcmath":      "bcmath",
-	"curl":        "curl",
-	"mbstring":    "mbstring",
-	"intl":        "intl",
-	"zip":         "zip",
-	"xml":         "xml",
-	"xmlwriter":   "xml",
-	"dom":         "xml",
-	"simplexml":   "xml",
-	"pdo_sqlite":  "sqlite3",
-	"sqlite3":     "sqlite3",
-	"pdo_pgsql":   "pgsql",
-	"pgsql":       "pgsql",
-	"opcache":     "opcache",
-	"xdebug":      "xdebug",
-	"pcov":        "pcov",
-	"sodium":      "sodium",
-	"openssl":     "openssl",
-	"sockets":     "common",
-	"tokenizer":   "common",
-	"json":        "common",
-	"exif":        "common",
-	"fileinfo":    "common",
-	"ctype":       "common",
-	"filter":      "common",
-	"hash":        "common",
-	"pdo":         "mysql",
+	"mysqli":     "mysql",
+	"pdo_mysql":  "mysql",
+	"mysqlnd":    "mysql",
+	"gd":         "gd",
+	"bcmath":     "bcmath",
+	"curl":       "curl",
+	"mbstring":   "mbstring",
+	"intl":       "intl",
+	"zip":        "zip",
+	"xml":        "xml",
+	"xmlwriter":  "xml",
+	"dom":        "xml",
+	"simplexml":  "xml",
+	"pdo_sqlite": "sqlite3",
+	"sqlite3":    "sqlite3",
+	"pdo_pgsql":  "pgsql",
+	"pgsql":      "pgsql",
+	"opcache":    "opcache",
+	"xdebug":     "xdebug",
+	"pcov":       "pcov",
+	"sodium":     "sodium",
+	"openssl":    "openssl",
+	"sockets":    "common",
+	"tokenizer":  "common",
+	"json":       "common",
+	"exif":       "common",
+	"fileinfo":   "common",
+	"ctype":      "common",
+	"filter":     "common",
+	"hash":       "common",
+	"pdo":        "mysql",
 }
 
 // Provisioner handles detection and installation of OS packages for PHP extensions.
 type Provisioner struct {
-	phpVersion      string
-	extensionDir    string
-	packagePrefix   string
+	phpVersion    string
+	extensionDir  string
+	packagePrefix string
 }
 
 // NewProvisioner creates a provisioner by inspecting the given PHP-FPM binary path.

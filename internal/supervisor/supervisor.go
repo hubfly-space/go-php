@@ -462,7 +462,7 @@ security.limit_extensions = .php
 		b = append(b, fmt.Sprintf("php_admin_value[%s] = %s\n", ini.Name, ini.Value)...)
 	}
 
-	if s.cfg.Extensions != nil && len(s.cfg.Extensions) > 0 {
+	if len(s.cfg.Extensions) > 0 {
 		b = append(b, "\n; Extensions loaded from resolved config\n"...)
 		for _, ext := range sortExtensionsByDependency(s.cfg.Extensions) {
 			if knownBuiltinExtensions[ext.Name] {

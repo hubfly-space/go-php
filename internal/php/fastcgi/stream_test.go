@@ -98,5 +98,3 @@ func writeRecordTo(conn net.Conn, rec Record) error {
 	_, err := conn.Write(buf.Bytes())
 	return err
 }
-
-

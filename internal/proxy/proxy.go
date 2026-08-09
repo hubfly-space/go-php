@@ -13,11 +13,11 @@ import (
 
 // ProxyConfig defines reverse proxy parameters.
 type ProxyConfig struct {
-	Target           string        // e.g. "http://127.0.0.1:8081"
-	Timeout          time.Duration // timeout for upstream requests
-	MaxIdleConns     int
-	KeepAlive        time.Duration
-	PreserveHost     bool
+	Target            string        // e.g. "http://127.0.0.1:8081"
+	Timeout           time.Duration // timeout for upstream requests
+	MaxIdleConns      int
+	KeepAlive         time.Duration
+	PreserveHost      bool
 	PassXForwardedFor bool
 }
 
