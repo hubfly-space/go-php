@@ -1,4 +1,3 @@
 .material
 AGENTS.md
-gateway
-!cmd/gateway
+/gateway

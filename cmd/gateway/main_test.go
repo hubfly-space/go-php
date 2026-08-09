@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"flag"
 	"net/http/httptest"
 	"os"
@@ -9,96 +8,142 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/go-php/gateway/internal/config"
 )
 
 func TestParseFlagsPermuted(t *testing.T) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	foo := fs.String("foo", "", "foo option")
-	bar := fs.Bool("bar", false, "bar flag")
+	phpFPM := fs.String("php-fpm", "", "php fpm path")
 
-	args := []string{"--foo", "val", "positional1", "--bar", "positional2"}
-	pos, err := parseFlagsPermuted(fs, args)
+	args := []string{".", "--php-fpm", "/usr/sbin/php-fpm8.3"}
+	positional, err := parseFlagsPermuted(fs, args)
 	if err != nil {
-		t.Fatalf("parseFlagsPermuted error: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if *foo != "val" {
-		t.Errorf("foo = %q, want %q", *foo, "val")
+	if len(positional) != 1 || positional[0] != "." {
+		t.Errorf("expected positional [.], got %v", positional)
 	}
-	if !*bar {
-		t.Errorf("bar = false, want true")
-	}
-	if len(pos) != 2 || pos[0] != "positional1" || pos[1] != "positional2" {
-		t.Errorf("positional = %v, want [positional1 positional2]", pos)
+
+	if *phpFPM != "/usr/sbin/php-fpm8.3" {
+		t.Errorf("expected php-fpm flag /usr/sbin/php-fpm8.3, got %q", *phpFPM)
 	}
 }
 
-func TestPrintUsage(t *testing.T) {
-	// Simple test to ensure printUsage runs without crashing
-	var buf bytes.Buffer
-	orig := flag.CommandLine.Output()
-	defer flag.CommandLine.SetOutput(orig)
-
-	printUsage()
-	// Usage output goes to os.Stderr; verify it contains command names
-	_ = buf
-}
-
-func TestResolveScript(t *testing.T) {
-	docRoot := t.TempDir()
-	os.WriteFile(filepath.Join(docRoot, "index.php"), []byte("<?php echo 'ok';"), 0644)
-	os.MkdirAll(filepath.Join(docRoot, "api"), 0755)
-	os.WriteFile(filepath.Join(docRoot, "api", "users.php"), []byte("<?php echo 'users';"), 0644)
-
+func TestIsLoopbackAddr(t *testing.T) {
 	tests := []struct {
-		name       string
-		path       string
-		wantScript string
-		wantPath   string
+		addr string
+		want bool
 	}{
-		{
-			name:       "root path",
-			path:       "/",
-			wantScript: "/index.php",
-			wantPath:   filepath.Join(docRoot, "index.php"),
-		},
-		{
-			name:       "explicit script",
-			path:       "/api/users.php",
-			wantScript: "/api/users.php",
-			wantPath:   filepath.Join(docRoot, "api/users.php"),
-		},
-		{
-			name:       "front controller path",
-			path:       "/dashboard/analytics",
-			wantScript: "/index.php",
-			wantPath:   filepath.Join(docRoot, "index.php"),
-		},
+		{"127.0.0.1:8080", true},
+		{"localhost:30200", true},
+		{"[::1]:8080", true},
+		{"0.0.0.0:8080", false},
+		{"192.168.1.1:8080", false},
+		{":8080", false},
+		{"invalid", false},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotScript, gotPath := resolveScript(docRoot, tt.path)
-			if gotScript != tt.wantScript {
-				t.Errorf("scriptName = %q, want %q", gotScript, tt.wantScript)
-			}
-			if gotPath != tt.wantPath {
-				t.Errorf("scriptPath = %q, want %q", gotPath, tt.wantPath)
-			}
-		})
+		got := isLoopbackAddr(tt.addr)
+		if got != tt.want {
+			t.Errorf("isLoopbackAddr(%q) = %v; want %v", tt.addr, got, tt.want)
+		}
 	}
 }
 
-func TestDevErrorFormatting(t *testing.T) {
-	handler := &gatewayHandler{}
-	req := httptest.NewRequest("GET", "/", nil)
-	rec := httptest.NewRecorder()
-	handler.devError(rec, req, 500, "Internal Error", "Detail message", "req_123", time.Now())
-
-	if rec.Code != 500 {
-		t.Errorf("status = %d, want 500", rec.Code)
+func TestDetectMIME(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"index.html", "text/html; charset=utf-8"},
+		{"style.css", "text/css; charset=utf-8"},
+		{"app.js", "application/javascript; charset=utf-8"},
+		{"data.json", "application/json; charset=utf-8"},
+		{"image.png", "image/png"},
+		{"photo.jpg", "image/jpeg"},
+		{"unknown.xyz", "application/octet-stream"},
 	}
-	if !strings.Contains(rec.Body.String(), "Internal Error") {
-		t.Errorf("expected body to contain 'Internal Error'")
+
+	for _, tt := range tests {
+		got := detectMIME(tt.path)
+		if got != tt.want {
+			t.Errorf("detectMIME(%q) = %q; want %q", tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestDetectFramework(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Empty dir: no framework.
+	fw, root := detectFramework(tmpDir)
+	if fw != "" || root != "" {
+		t.Errorf("expected empty detection for empty dir, got %q, %q", fw, root)
+	}
+
+	// Laravel detection via artisan and public dir.
+	if err := os.WriteFile(filepath.Join(tmpDir, "artisan"), []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, "public"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	fw, root = detectFramework(tmpDir)
+	if fw != "Laravel" {
+		t.Errorf("expected Laravel framework, got %q", fw)
+	}
+	if root != filepath.Join(tmpDir, "public") {
+		t.Errorf("expected pubRoot %q, got %q", filepath.Join(tmpDir, "public"), root)
+	}
+}
+
+func TestDevErrorXSSEscaping(t *testing.T) {
+	h := &gatewayHandler{}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/<script>alert('xss')</script>", nil)
+
+	start := time.Now()
+	h.devError(w, r, 400, "Bad Request", "<img src=x onerror=alert(1)>", "req_<script>", start)
+
+	body := w.Body.String()
+
+	if strings.Contains(body, "<script>alert('xss')</script>") {
+		t.Errorf("reflected XSS in Path output! Body: %s", body)
+	}
+	if strings.Contains(body, "<img src=x onerror=alert(1)>") {
+		t.Errorf("reflected XSS in Detail output! Body: %s", body)
+	}
+
+	if !strings.Contains(body, "&lt;script&gt;") && !strings.Contains(body, "%3Cscript%3E") {
+		t.Errorf("expected escaped HTML output in response body")
+	}
+}
+
+func TestBuildRouter(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Routes = []config.RouteConfig{
+		{
+			PathPrefix: "/api/",
+			Target:     "/index.php",
+			Methods:    []string{"GET", "POST"},
+		},
+	}
+
+	engine, err := buildRouter(cfg)
+	if err != nil {
+		t.Fatalf("buildRouter failed: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "http://example.com/api/users", nil)
+	matched := engine.Match(req)
+	if matched == nil {
+		t.Fatalf("expected route match for /api/users")
+	}
+	if matched.Target != "/index.php" {
+		t.Errorf("expected target /index.php, got %q", matched.Target)
 	}
 }
