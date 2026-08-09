@@ -60,6 +60,12 @@ func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 	revProxy := httputil.NewSingleHostReverseProxy(targetURL)
 	revProxy.Transport = transport
 
+	revProxy.ErrorHandler = func(w http.ResponseWriter, req *http.Request, err error) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = fmt.Fprintf(w, `{"error":{"code":"E_BAD_GATEWAY","message":"upstream connection failed: %v"}}`, err)
+	}
+
 	originalDirector := revProxy.Director
 	revProxy.Director = func(req *http.Request) {
 		originalDirector(req)
@@ -68,6 +74,23 @@ func NewProxy(cfg ProxyConfig) (*Proxy, error) {
 		}
 		if !cfg.PassXForwardedFor {
 			req.Header.Del("X-Forwarded-For")
+		}
+
+		// Strip RFC 7230 hop-by-hop headers unless upgrading to WebSocket
+		if !isWebSocketUpgrade(req) {
+			hopByHop := []string{
+				"Connection",
+				"Keep-Alive",
+				"Proxy-Authenticate",
+				"Proxy-Authorization",
+				"TE",
+				"Trailers",
+				"Transfer-Encoding",
+				"Upgrade",
+			}
+			for _, h := range hopByHop {
+				req.Header.Del(h)
+			}
 		}
 	}
 

@@ -289,7 +289,7 @@ func (h *siteHandler) servePHP(w http.ResponseWriter, r *http.Request, absPath s
 
 	params := cgi.BuildParams(r, scriptPath, scriptName, h.docRoot)
 
-	client, err := fastcgi.NewClient(h.sockPath, 5*time.Second)
+	client, err := fastcgi.NewUnixClient(h.sockPath, 5*time.Second)
 	if err != nil {
 		h.logger.Error("fastcgi connect failed", "site", h.siteID, "error", err)
 		http.Error(w, "Bad Gateway: Could not connect to PHP backend.", http.StatusBadGateway)

@@ -135,7 +135,7 @@ security.limit_extensions = .php
 	}
 
 	// Connect FastCGI client.
-	client, err := fastcgi.NewClient(socket, 5*time.Second)
+	client, err := fastcgi.NewUnixClient(socket, 5*time.Second)
 	if err != nil {
 		cmd.Process.Kill()
 		t.Fatalf("failed to connect to php-fpm: %v", err)
@@ -215,7 +215,7 @@ func (c *TestContext) Request(params map[string]string, body string) (int, map[s
 		// Reconnect on connection error and retry once.
 		if strings.Contains(err.Error(), "EOF") || strings.Contains(err.Error(), "broken pipe") {
 			c.Client.Close()
-			newClient, connErr := fastcgi.NewClient(c.Socket, 5*time.Second)
+			newClient, connErr := fastcgi.NewUnixClient(c.Socket, 5*time.Second)
 			if connErr != nil {
 				return 0, nil, "", fmt.Errorf("reconnect failed: %w", connErr)
 			}

@@ -63,3 +63,47 @@ func TestIsWebSocketUpgrade(t *testing.T) {
 		t.Error("expected isWebSocketUpgrade to be false for normal HTTP request")
 	}
 }
+
+func TestProxy_HopByHopHeaders(t *testing.T) {
+	var receivedHeaders http.Header
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedHeaders = r.Header.Clone()
+		w.WriteHeader(200)
+	}))
+	defer backend.Close()
+
+	p, err := NewProxy(ProxyConfig{Target: backend.URL})
+	if err != nil {
+		t.Fatalf("NewProxy failed: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Header.Set("Keep-Alive", "timeout=5")
+	req.Header.Set("Proxy-Authorization", "Basic xyz")
+	rec := httptest.NewRecorder()
+
+	p.ServeHTTP(rec, req)
+
+	if receivedHeaders.Get("Keep-Alive") != "" {
+		t.Errorf("Keep-Alive header should be stripped")
+	}
+	if receivedHeaders.Get("Proxy-Authorization") != "" {
+		t.Errorf("Proxy-Authorization header should be stripped")
+	}
+}
+
+func TestProxy_UpstreamError(t *testing.T) {
+	p, err := NewProxy(ProxyConfig{Target: "http://127.0.0.1:59999"})
+	if err != nil {
+		t.Fatalf("NewProxy failed: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	rec := httptest.NewRecorder()
+
+	p.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("got status %d, want BadGateway (502)", rec.Code)
+	}
+}
