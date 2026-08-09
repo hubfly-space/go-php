@@ -13,12 +13,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/go-php/gateway/internal/runtime"
+	"github.com/gorilla/websocket"
+
 	"github.com/go-php/gateway/internal/config"
 	"github.com/go-php/gateway/internal/deploy"
 	"github.com/go-php/gateway/internal/diagnostics"
 	"github.com/go-php/gateway/internal/filesystem"
-	"github.com/gorilla/websocket"
+	"github.com/go-php/gateway/internal/runtime"
 )
 
 // StatusProvider exposes gateway status for the UI.
@@ -176,12 +177,12 @@ type PHPCfg struct {
 
 // RouteCfg for JSON response.
 type RouteCfg struct {
-	Host              string            `json:"host"`
-	Path              string            `json:"path"`
-	Target            string            `json:"target"`
-	Status            int               `json:"status"`
-	Methods           []string          `json:"methods,omitempty"`
-	Headers           map[string]string `json:"headers,omitempty"`
+	Host              string             `json:"host"`
+	Path              string             `json:"path"`
+	Target            string             `json:"target"`
+	Status            int                `json:"status"`
+	Methods           []string           `json:"methods,omitempty"`
+	Headers           map[string]string  `json:"headers,omitempty"`
 	ExtensionOverride *ExtensionOverride `json:"extensions,omitempty"`
 }
 
@@ -591,7 +592,7 @@ func (s *Server) handleExtensions(w http.ResponseWriter, r *http.Request) {
 		}
 
 		jsonResp(w, map[string]any{
-			"profiles":  profileList,
+			"profiles":   profileList,
 			"extensions": []string{},
 		})
 

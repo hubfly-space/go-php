@@ -4,10 +4,11 @@ import (
 	"context"
 	"net/http"
 
+	"testing"
+
 	"github.com/go-php/gateway/pkg/configapi"
 	"github.com/go-php/gateway/pkg/pluginapi"
 	"github.com/go-php/gateway/pkg/policyapi"
-	"testing"
 )
 
 func TestConfigAPI(t *testing.T) {

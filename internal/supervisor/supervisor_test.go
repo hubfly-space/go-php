@@ -11,11 +11,11 @@ import (
 func TestGenerateConfigPhpIni(t *testing.T) {
 	dir := t.TempDir()
 	cfg := Config{
-		PHPBinary:   "/usr/sbin/php-fpm",
-		SocketPath:  filepath.Join(dir, "php-fpm.sock"),
-		PIDFile:     filepath.Join(dir, "php-fpm.pid"),
-		ErrorLog:    filepath.Join(dir, "error.log"),
-		RuntimeDir:  dir,
+		PHPBinary:  "/usr/sbin/php-fpm",
+		SocketPath: filepath.Join(dir, "php-fpm.sock"),
+		PIDFile:    filepath.Join(dir, "php-fpm.pid"),
+		ErrorLog:   filepath.Join(dir, "error.log"),
+		RuntimeDir: dir,
 		PhpIni: []IniSetting{
 			{Name: "memory_limit", Value: "256M"},
 			{Name: "upload_max_filesize", Value: "64M"},
