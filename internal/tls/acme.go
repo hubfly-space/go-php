@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -232,7 +233,12 @@ func (h *HTTPChallenge) Stop() {
 
 // ServeHTTP handles /.well-known/acme-challenge/ requests.
 func (h *HTTPChallenge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	token := r.URL.Path[len("/.well-known/acme-challenge/"):]
+const prefix = "/.well-known/acme-challenge/"
+	if !strings.HasPrefix(r.URL.Path, prefix) {
+		http.NotFound(w, r)
+		return
+	}
+	token := r.URL.Path[len(prefix):]
 
 	h.mu.RLock()
 	response, ok := h.proofs[token]

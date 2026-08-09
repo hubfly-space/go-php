@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net"
@@ -1035,10 +1036,10 @@ h1{color:#ff6b6b}h2{color:#ffd93d}pre{background:#16213e;padding:20px;border-rad
 </table>
 <pre>gateway %s</pre>
 </body></html>`,
-		status, title, status, title, detail,
-		reqID, r.URL.Path, r.Method,
+		status, html.EscapeString(title), status, html.EscapeString(title), html.EscapeString(detail),
+		html.EscapeString(reqID), html.EscapeString(r.URL.Path), html.EscapeString(r.Method),
 		time.Since(start).Milliseconds(),
-		buildinfo.Get().Version,
+		html.EscapeString(buildinfo.Get().Version),
 	)
 }
 

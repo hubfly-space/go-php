@@ -548,7 +548,7 @@ func (s *Server) handleConfigSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1024*1024))
 	if err != nil {
 		jsonErr(w, "read request body failed", http.StatusBadRequest)
 		return

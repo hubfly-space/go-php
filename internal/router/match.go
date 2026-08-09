@@ -9,14 +9,15 @@ import (
 
 // Route represents a single routing rule.
 type Route struct {
-	Host       string // exact host match (empty = any)
-	Path       string // exact path match
-	PathPrefix string // prefix match
-	Regex      string // regex match (compiled at init)
-	Target     string // rewrite target
-	Status     int    // redirect status (301, 302, etc.) — 0 = proxy
-	Methods    []string
-	Headers    map[string]string
+	Host          string // exact host match (empty = any)
+	Path          string // exact path match
+	PathPrefix    string // prefix match
+	Regex         string // regex match (compiled at init)
+	Target        string // rewrite target
+	Status        int    // redirect status (301, 302, etc.) — 0 = proxy
+	Methods       []string
+	Headers       map[string]string
+	compiledRegex *regexp.Regexp
 }
 
 // Label returns a stable identifier for the route, suitable as a metrics label.
@@ -49,10 +50,11 @@ func NewEngine(routes []Route) (*Engine, error) {
 	e := &Engine{routes: make([]Route, len(routes))}
 	for i, r := range routes {
 		if r.Regex != "" {
-			_, err := regexp.Compile(r.Regex)
+			re, err := regexp.Compile(r.Regex)
 			if err != nil {
 				return nil, fmt.Errorf("compile regex %q: %w", r.Regex, err)
 			}
+			r.compiledRegex = re
 		}
 		e.routes[i] = r
 	}
@@ -102,7 +104,13 @@ func (e *Engine) matchRoute(route *Route, r *http.Request) bool {
 
 	switch {
 	case route.Regex != "":
-		re, _ := regexp.Compile(route.Regex)
+		if route.compiledRegex != nil {
+			return route.compiledRegex.MatchString(path)
+		}
+		re, err := regexp.Compile(route.Regex)
+		if err != nil {
+			return false
+		}
 		return re.MatchString(path)
 
 	case route.PathPrefix != "":
@@ -129,7 +137,14 @@ func (route *Route) Rewrite(path string) string {
 
 	// Regex capture groups: $1, $2, etc.
 	if route.Regex != "" {
-		re, _ := regexp.Compile(route.Regex)
+		re := route.compiledRegex
+		if re == nil {
+			var err error
+			re, err = regexp.Compile(route.Regex)
+			if err != nil {
+				return target
+			}
+		}
 		if matches := re.FindStringSubmatch(path); len(matches) > 0 {
 			for i, m := range matches {
 				target = strings.ReplaceAll(target, fmt.Sprintf("$%d", i), m)

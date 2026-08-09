@@ -2,8 +2,10 @@ package deploy
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"sync"
 	"time"
 )
@@ -158,7 +160,14 @@ func (cs *CanarySwitcher) CanaryStateView() *CanaryState {
 }
 
 func randomInt(max int) int {
-	return int(time.Now().UnixNano() % int64(max))
+	if max <= 0 {
+		return 0
+	}
+	nBig, err := rand.Int(rand.Reader, big.NewInt(int64(max)))
+	if err != nil {
+		return int(time.Now().UnixNano() % int64(max))
+	}
+	return int(nBig.Int64())
 }
 
 // DeployCLI holds configuration for the deploy CLI commands.

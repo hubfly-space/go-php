@@ -192,14 +192,26 @@ func (rm *ReleaseManager) Deactivate() error {
 
 // Rollback reverts to the previous release.
 func (rm *ReleaseManager) Rollback() (*Release, error) {
-	rm.mu.Lock()
-	defer rm.mu.Unlock()
-
-	if rm.activeID == "" {
-		return nil, fmt.Errorf("no active release to rollback from")
+	prevID, err := rm.findPreviousReleaseID()
+	if err != nil {
+		return nil, err
 	}
 
-	// Find the most recently deactivated release.
+	if err := rm.Activate(prevID); err != nil {
+		return nil, fmt.Errorf("rollback: %w", err)
+	}
+
+	return rm.Get(prevID)
+}
+
+func (rm *ReleaseManager) findPreviousReleaseID() (string, error) {
+	rm.mu.RLock()
+	defer rm.mu.RUnlock()
+
+	if rm.activeID == "" {
+		return "", fmt.Errorf("no active release to rollback from")
+	}
+
 	var prev *Release
 	for _, rel := range rm.releases {
 		if rel.ID == rm.activeID {
@@ -207,24 +219,16 @@ func (rm *ReleaseManager) Rollback() (*Release, error) {
 		}
 		if rel.DeactivatedAt != nil {
 			if prev == nil || rel.DeactivatedAt.After(*prev.DeactivatedAt) {
-				rel2 := *rel
-				prev = &rel2
+				prev = rel
 			}
 		}
 	}
 
 	if prev == nil {
-		return nil, fmt.Errorf("no previous release found")
+		return "", fmt.Errorf("no previous release found")
 	}
 
-	// Must unlock before calling Activate.
-	rm.mu.Unlock()
-	if err := rm.Activate(prev.ID); err != nil {
-		return nil, fmt.Errorf("rollback: %w", err)
-	}
-	rm.mu.Lock()
-
-	return rm.releases[prev.ID], nil
+	return prev.ID, nil
 }
 
 // Active returns the currently active release, or nil.

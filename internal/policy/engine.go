@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -247,8 +249,25 @@ func (e *Engine) matchesCondition(cond *Condition, ctx *Context) bool {
 		}
 
 	case CondQueryParam:
+		parsedQuery, _ := url.ParseQuery(ctx.Query)
 		for _, qp := range cond.Values {
-			if strings.Contains(ctx.Query, qp) {
+			parts := strings.SplitN(qp, "=", 2)
+			paramName := parts[0]
+			if vals, exists := parsedQuery[paramName]; exists {
+				if len(parts) == 1 {
+					result = true
+					break
+				}
+				for _, v := range vals {
+					if v == parts[1] {
+						result = true
+						break
+					}
+				}
+				if result {
+					break
+				}
+			} else if strings.Contains(ctx.Query, qp) {
 				result = true
 				break
 			}
@@ -256,8 +275,10 @@ func (e *Engine) matchesCondition(cond *Condition, ctx *Context) bool {
 
 	case CondBodySize:
 		for _, sz := range cond.Values {
-			var max int64
-			fmt.Sscanf(sz, "%d", &max)
+			max, err := strconv.ParseInt(sz, 10, 64)
+			if err != nil {
+				continue
+			}
 			if ctx.BodySize > max {
 				result = true
 				break
