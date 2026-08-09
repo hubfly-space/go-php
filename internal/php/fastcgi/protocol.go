@@ -84,9 +84,15 @@ type Client struct {
 	mu     sync.Mutex
 }
 
-// NewClient creates a FastCGI client connected to addr.
-func NewClient(addr string, timeout time.Duration) (*Client, error) {
-	conn, err := net.DialTimeout("unix", addr, timeout)
+// NewClient creates a FastCGI client connected to network and addr.
+func NewClient(network, addr string, timeout time.Duration) (*Client, error) {
+	if network == "" {
+		network = "unix"
+	}
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	conn, err := net.DialTimeout(network, addr, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("fastcgi: dial: %w", err)
 	}
@@ -95,6 +101,11 @@ func NewClient(addr string, timeout time.Duration) (*Client, error) {
 		reader: bufio.NewReader(conn),
 		nextID: 1,
 	}, nil
+}
+
+// NewUnixClient creates a FastCGI client connected over a UNIX domain socket.
+func NewUnixClient(addr string, timeout time.Duration) (*Client, error) {
+	return NewClient("unix", addr, timeout)
 }
 
 // Close closes the connection.

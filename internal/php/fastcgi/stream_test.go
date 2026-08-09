@@ -24,9 +24,16 @@ func TestExecuteStream(t *testing.T) {
 		}
 		defer conn.Close()
 
-		// Read BEGIN_REQUEST, PARAMS, STDIN
-		buf := make([]byte, 1024)
-		_, _ = conn.Read(buf)
+		// Read incoming records until empty STDIN (end of request body)
+		for {
+			rec, err := DecodeRecord(conn)
+			if err != nil {
+				break
+			}
+			if rec.Type == typeStdin && rec.ContentLength == 0 {
+				break
+			}
+		}
 
 		// Send STDOUT record
 		content := []byte("Status: 200 OK\r\nContent-Type: text/plain\r\n\r\nHello Streaming World!")
