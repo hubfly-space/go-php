@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -129,15 +131,23 @@ func (s *Server) routes() {
 	fileServer := http.FileServer(http.FS(staticFS))
 	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// Serve static files, but for SPA routes serve index.html
-		path := r.URL.Path
-		if path == "/" || path == "" {
+		reqPath := r.URL.Path
+		cleanPath := path.Clean("/" + reqPath)
+		if cleanPath == "/" {
+			r.URL.Path = "/"
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+
+		relPath := strings.TrimPrefix(cleanPath, "/")
+		if relPath == "" || relPath == "." || relPath == ".." || strings.HasPrefix(relPath, "../") {
 			r.URL.Path = "/"
 			fileServer.ServeHTTP(w, r)
 			return
 		}
 
 		// Check if file exists in static
-		f, err := staticFS.Open(path[1:]) // strip leading /
+		f, err := staticFS.Open(relPath)
 		if err != nil {
 			// SPA fallback: serve index.html
 			r.URL.Path = "/"
@@ -145,6 +155,7 @@ func (s *Server) routes() {
 			return
 		}
 		f.Close()
+		r.URL.Path = cleanPath
 		fileServer.ServeHTTP(w, r)
 	})
 }

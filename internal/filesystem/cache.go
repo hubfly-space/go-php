@@ -83,8 +83,32 @@ func (s *CacheControlledFileServer) ServeHTTP(w http.ResponseWriter, r *http.Req
 }
 
 func (s *CacheControlledFileServer) setETag(w http.ResponseWriter, r *http.Request, path string) {
-	fullPath := filepath.Join(s.Root, filepath.Clean(path))
-	info, err := os.Stat(fullPath)
+	cleanPath := filepath.Clean("/" + filepath.ToSlash(path))
+	relPath := strings.TrimPrefix(cleanPath, "/")
+	if relPath == "" || relPath == "." || strings.HasPrefix(relPath, "../") || relPath == ".." {
+		return
+	}
+
+	rootAbs, err := filepath.Abs(s.Root)
+	if err != nil {
+		return
+	}
+
+	fullPath := filepath.Join(rootAbs, relPath)
+	fullAbs, err := filepath.Abs(fullPath)
+	if err != nil {
+		return
+	}
+
+	rootWithSep := rootAbs
+	if !strings.HasSuffix(rootWithSep, string(os.PathSeparator)) {
+		rootWithSep += string(os.PathSeparator)
+	}
+	if fullAbs != rootAbs && !strings.HasPrefix(fullAbs, rootWithSep) {
+		return
+	}
+
+	info, err := os.Stat(fullAbs)
 	if err != nil || info.IsDir() {
 		return
 	}
